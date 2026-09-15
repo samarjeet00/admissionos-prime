@@ -14,6 +14,10 @@ _PLACEHOLDERS = ("<", "change-me", "sk-ant-...", "...")
 def _env(name: str, default: str | None = None) -> str | None:
     """Read a setting; untouched .env.example placeholders count as unset."""
     value = (os.getenv(name) or "").strip()
+    if value.startswith("#"):                 # dotenv keeps "KEY=   # comment" as the value
+        value = ""
+    elif " #" in value:
+        value = value.split(" #", 1)[0].strip()
     if not value or any(p in value for p in _PLACEHOLDERS):
         return default
     return value
