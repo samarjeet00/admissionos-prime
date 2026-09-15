@@ -66,7 +66,9 @@ DATA_DIR = ROOT / "data"
 GOOGLE_SERVICE_ACCOUNT_FILE = _env("GOOGLE_SERVICE_ACCOUNT_FILE", str(DATA_DIR / "google-service-account.json"))
 REFERENCE_SHEET_ID = _env("REFERENCE_SHEET_ID", "1mgmv4Cc67olcCN-U7vkNC0q-MVD-23F0_UCAdRODyvk")
 REFERENCE_SHEET_TABS = [t.strip() for t in (_env("REFERENCE_SHEET_TABS",
-                        "Board Exam & Result Dates,Entrance Exam & Result Dates") or "").split(",") if t.strip()]
+                        "Board Exam & Result Dates,Entrance Exam & Result Dates,Last Dates Performance") or "").split(",") if t.strip()]
+# When the primary brain's quota is exhausted, retry the same question on this provider (anthropic | vertex | none)
+LLM_FALLBACK_PROVIDER = (_env("LLM_FALLBACK_PROVIDER", "anthropic") or "none").lower()
 REFERENCE_REFRESH_HOURS = float(_env("REFERENCE_REFRESH_HOURS", "6"))
 
 # --- Paths --------------------------------------------------------------------

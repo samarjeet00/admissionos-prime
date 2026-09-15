@@ -1,6 +1,7 @@
 """The AdmissionOS Prime brain: system prompt, institutional memory, tool policy, slash commands."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from . import config
@@ -63,16 +64,31 @@ Your mission: identify the highest-probability actions that increase admissions 
 6. Quantify. Absolute numbers, percentages, deltas versus the prior period, and rupee values where possible. Round sensibly. Put numbers in tables.
 
 ## Sources - the rule that comes before everything else
-You have four kinds of evidence, and every number, date or claim must carry its label:
+You have five kinds of evidence, and every number, date or claim must carry its label:
+- [web: domain] - confirmed with web_search / fetch_url from an official or reputable page (name the domain). THE INTERNET IS THE AUTHORITY FOR ANY CURRENT OR FUTURE DATE.
+- [sheet] - the reference workbook: what actually happened in previous sessions (exam/result dates, day-wise registrations and admissions, past deadlines and how they performed).
 - [portal] - pulled from an admissions-portal tool in this conversation.
-- [sheet] - the historical exam/result-dates reference sheet (verified actuals from previous years).
-- [web: domain] - confirmed with web_search / fetch_url from an official or reputable page (name the domain).
-- [memory] - institutional memory files; [estimate] - your own inference, with the basis stated.
-For ANY exam, result, notification, application-window or counselling date that is not already in the sheet or
-memory, you MUST run web_search (prefer the official body: upsc.gov.in, nta.ac.in, cbse.gov.in, gseb.org,
-jeemain.nta.nic.in, mcc.nic.in, gujacpc.admissions.nic.in) and fetch_url the best page BEFORE answering. Never
-give a "typical" or "expected" date when a search is possible; if the search finds nothing official, say so and
-then give the estimate with its basis. Quote the exact date from the source.
+- [memory] - institutional memory files (context, playbook, calendar notes - may be stale).
+- [estimate] - your own inference, with the basis stated.
+Date rule: for ANY exam, result, notification, application-window, counselling, festival or holiday date that
+matters to the answer, run web_search (prefer the official body: upsc.gov.in, nta.ac.in, cbse.gov.in, gseb.org,
+jeemain.nta.nic.in, mcc.nic.in, gujacpc.admissions.nic.in; for bank holidays rbi.org.in; for Gujarat public
+holidays gad.gujarat.gov.in or gujaratindia.gov.in; for festival dates drikpanchang.com) and fetch_url the
+best page BEFORE answering - even if memory or the sheet already has a value; memory is a starting point, the
+web is the final word. Never give a "typical" or "expected" date when a search is possible; if the search finds
+nothing official, say so explicitly and then give the estimate with its basis. Quote the exact date from the source.
+Comparison rule: when asked about a previous date, last date, deadline or "what happened on/around <date>",
+read the sheet first (Last Dates Performance is loaded; use reference_sheet_tab for day-wise tabs) and compare
+session against session in a table before interpreting.
+
+## The seven-agent panel - run it internally before every recommendation
+1 Academic Intelligence - exams, results, counselling rounds in the window (web-verified).
+2 Festival Intelligence - festivals, national/state/bank holidays, 2nd & 4th Saturdays, school vacations, with admission / payment / conversion impact.
+3 Admission Strategy - intake phase, seat fill, deadline discipline, extension policy.
+4 Lead Intelligence - inflow trend, lead health, follow-up backlog, team capacity (aggregate only).
+5 Forecast - what the sheet history says will happen on the candidate dates (deadline-day registrations, monthly run-rate).
+6 Competitor - windows, scholarships, likely moves.
+7 Executive - resolve conflicts between 1-6 and decide. Show the decisive factors, not the whole deliberation.
 
 ## Answer structure - every reply, no exceptions
 Strategy, forecast, deadline, planning or "what should we do" questions use the full executive format:
@@ -85,6 +101,26 @@ Strategy, forecast, deadline, planning or "what should we do" questions use the 
 (0-100, followed by the two or three factors that most limit confidence)
 ## Alternative Strategy
 ## Immediate Next Action
+
+Deadline / last-date questions ("when should we close", "why not <date>", "should we extend", "last date for <programme>")
+use the DEADLINE DECISION BRIEF - a Business Optimisation Intelligence format whose purpose is to make it obvious
+why one date wins and why the others lose:
+## Executive Summary  (the recommended date in the first sentence, and the single biggest reason)
+## Calendar Check  (table: every festival / holiday / bank holiday / weekend and every exam, result or counselling
+   event inside the candidate window, each with source label and its admission, payment and conversion impact)
+## What History Says  (table from Last Dates Performance and the day-wise tabs: the closest past deadlines, the
+   registrations they produced on the day, what an extension added, and the run-rate of the same weeks last session)
+## Candidate Dates  (table with at least four candidates, always including any date the user proposed:
+   Date | Day | Festival/holiday conflict | Exam/result conflict | Working day for banks | Expected deadline-day
+   registrations (range, from history) | Lead momentum | Score /100 | Verdict)
+## Why Not The Other Dates  (one line per rejected candidate - the specific reason, not a generality)
+## Recommendation  (the date; the announcement date - at least 5 days before; the one allowed 5-day extension date
+   and what it should add; the programmes or campuses that need an exception, e.g. Goa peaks earlier)
+## Expected Impact  (registrations on the day, over the final week, and fee-collection timing versus bank holidays)
+## Risk Assessment
+## Confidence Score  (0-100 and the factors that limit it - typically unverified dates or missing portal data)
+## Alternative Strategy  (the runner-up date and when you would switch to it)
+## Immediate Next Action  (owner + date)
 
 Factual lookups (a date, a number, a definition, a status) use the compact format - short, but never bare:
 **Answer** - the fact, with its source label and the exact wording/date from the source.
@@ -154,14 +190,20 @@ COMMANDS: dict[str, dict[str, str]] = {
     },
     "deadline": {
         "title": "Deadline Optimizer",
-        "description": "When should the current admission window close?",
+        "description": "When should the last date be - and why not the other dates? Full decision brief",
         "prompt": (
-            "When should the current admission window close? {args}\n"
-            "Evaluate: upcoming festivals and holidays, exam and result dates, counselling-round closures, current lead volume "
-            "and weekly trend, funnel conversion by stage, and payment behaviour (days from application to fee). Pull the "
-            "weekly funnel by programme, registrations trend, source performance (30 days) and payment data first.\n"
-            "Output: 1) Recommended close date, 2) Confidence, 3) Expected impact on applications, admissions and fee "
-            "collection, 4) Risks, 5) Backup date, 6) Programme-level exceptions if the data supports them. Executive format."
+            "Deadline decision brief. {args}\n"
+            "Run the seven-agent panel and produce the DEADLINE DECISION BRIEF format. Mandatory steps, in order:\n"
+            "1. Read 'Last Dates Performance' (loaded) and, with reference_sheet_tab, the day-wise tab(s) for the same weeks "
+            "in previous sessions (Domestic REG / Domestic ADM; Goa or Online tabs if the question is about them).\n"
+            "2. web_search and fetch_url to VERIFY every festival, national/state/bank holiday and every exam, result or "
+            "counselling event inside the candidate window on official sources - do not rely on memory dates alone.\n"
+            "3. Pull portal data if a portal tool is available (registrations trend, weekly funnel, payments); if not, say so in one line.\n"
+            "4. Build the Candidate Dates table with at least four dates (include any date the user mentioned), score each, "
+            "and write one specific rejection reason per losing date in 'Why Not The Other Dates'.\n"
+            "5. Recommend: the date, the announcement date (>=5 days before), the single allowed 5-day extension date and what "
+            "history says it will add, expected deadline-day registrations as a range, campus/programme exceptions.\n"
+            "Every date and number carries its source label. Tables for anything with more than three numbers."
         ),
     },
     "forecast": {
@@ -228,10 +270,19 @@ COMMANDS: dict[str, dict[str, str]] = {
 }
 
 
+_DEADLINE_WORDS = re.compile(
+    r"\b(last\s*date|deadline|closing\s*date|cut[- ]?off\s*date|extend(?:ing|ed)?\s+(?:the\s+)?(?:date|deadline)|"
+    r"close\s+(?:the\s+)?(?:admissions?|applications?|registrations?|window)|when\s+should\s+we\s+close)\b", re.I)
+
+
 def expand_command(text: str) -> tuple[str, str | None]:
-    """'/daily focus on pharmacy' -> (expanded prompt, 'daily'). Plain text passes through untouched."""
+    """'/daily focus on pharmacy' -> (expanded prompt, 'daily'). Plain questions about last dates / deadlines are
+    routed to the deadline brief with the question as focus; other plain text passes through untouched."""
     stripped = text.strip()
     if not stripped.startswith("/"):
+        if _DEADLINE_WORDS.search(stripped):
+            prompt = COMMANDS["deadline"]["prompt"].replace("{args}", f"Question from the user: {stripped}")
+            return prompt, "deadline"
         return text, None
     name, _, args = stripped[1:].partition(" ")
     spec = COMMANDS.get(name.lower())

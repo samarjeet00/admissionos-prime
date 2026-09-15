@@ -54,6 +54,40 @@ else:
     claude = _make_claude_client()
 USE_FALLBACKS = config.ANTHROPIC_FALLBACKS and PROVIDER == "anthropic"   # server-side fallbacks are Claude API only
 
+# Secondary brain used only when the primary's quota is exhausted (Gemini -> Claude).
+FALLBACK = config.LLM_FALLBACK_PROVIDER if PROVIDER == "gemini" and config.LLM_FALLBACK_PROVIDER in ("anthropic", "vertex") else None
+_fallback_client: Any = None
+
+
+def _fallback_claude() -> Any:
+    global _fallback_client
+    if _fallback_client is None:
+        import os
+        if FALLBACK == "vertex":
+            from anthropic import AsyncAnthropicVertex
+            os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", config.GOOGLE_SERVICE_ACCOUNT_FILE)
+            _fallback_client = AsyncAnthropicVertex(project_id=config.VERTEX_PROJECT_ID, region=config.VERTEX_REGION)
+        else:
+            _fallback_client = anthropic.AsyncAnthropic()
+    return _fallback_client
+
+
+def _gemini_history_as_text(history: list[dict[str, Any]], limit: int = 12000) -> str:
+    """Flatten a Gemini-format conversation into a transcript so the fallback brain has the context."""
+    lines = []
+    for turn in history:
+        role = "User" if turn.get("role") == "user" else "AdmissionOS"
+        for part in turn.get("parts", []):
+            if "text" in part:
+                lines.append(f"{role}: {part['text']}")
+            elif "functionCall" in part:
+                lines.append(f"{role} called tool {part['functionCall'].get('name')}")
+            elif "functionResponse" in part:
+                res = str((part['functionResponse'].get('response') or {}).get('result', ''))[:1500]
+                lines.append(f"Tool {part['functionResponse'].get('name')} returned: {res}")
+    text = "\n".join(lines)
+    return text[-limit:]
+
 
 def model_name() -> str:
     return (gemini.model or "gemini") if gemini else config.ANTHROPIC_MODEL
@@ -145,16 +179,22 @@ def _serialize_content(blocks: list[Any]) -> list[dict[str, Any]]:
     return [b.model_dump(mode="json", exclude_none=True) for b in blocks]
 
 
-async def _run_turn_claude(user: dict[str, Any], key: str, message: str) -> AsyncIterator[Event]:
-    history = conversations[key]
+async def _run_turn_claude(user: dict[str, Any], key: str, message: str,
+                           transcript: str | None = None, client: Any = None) -> AsyncIterator[Event]:
+    """Primary Claude path, or (with `transcript` + `client`) a one-off fallback turn that does not touch stored history."""
+    fallback_mode = transcript is not None
+    history = [] if fallback_mode else conversations[key]
     prompt, command = brain.expand_command(message)
-    if command:
+    if command and not fallback_mode:
         yield Event("command", name=command, text=brain.COMMANDS[command]["title"])
+    if fallback_mode and transcript:
+        prompt = f"Earlier conversation (for context):\n{transcript}\n\n---\nCurrent request:\n{prompt}"
     start_len = len(history)
     history.append({"role": "user", "content": [{"type": "text", "text": _envelope(prompt, user)}]})
     _trim(history)
     start_len = min(start_len, len(history) - 1)
 
+    api_client = client or claude
     tools, allowed = _tools_for(user)
     request: dict[str, Any] = dict(
         model=config.ANTHROPIC_MODEL,
@@ -164,10 +204,11 @@ async def _run_turn_claude(user: dict[str, Any], key: str, message: str) -> Asyn
         output_config={"effort": config.ANTHROPIC_EFFORT if command else "medium"},
         tools=tools,
     )
-    if USE_FALLBACKS:
+    use_server_fallbacks = USE_FALLBACKS or (fallback_mode and FALLBACK == "anthropic" and config.ANTHROPIC_FALLBACKS)
+    if use_server_fallbacks:
         request["betas"] = ["server-side-fallback-2026-07-01"]
         request["extra_body"] = {"fallbacks": "default"}
-    messages_api = claude.beta.messages if USE_FALLBACKS else claude.messages
+    messages_api = api_client.beta.messages if use_server_fallbacks else api_client.messages
 
     for _round in range(config.MAX_TOOL_ROUNDS):
         try:
@@ -254,6 +295,13 @@ async def _run_turn_gemini(user: dict[str, Any], key: str, message: str) -> Asyn
         except llm_gemini.GeminiError as exc:
             del history[start_len:]
             log.error("Gemini error %s: %s", exc.status, exc.message)
+            if exc.status in (429, 503, 500, 502, 504) and FALLBACK:
+                # Quota exhausted or Google overloaded: answer this question on the secondary brain instead.
+                yield Event("notice", f"Gemini unavailable ({exc.status}) - answering with Claude instead.")
+                transcript = _gemini_history_as_text(history)
+                async for ev in _run_turn_claude(user, key, message, transcript=transcript, client=_fallback_claude()):
+                    yield ev
+                return
             if exc.status == 429:
                 text = "The free Gemini quota is busy right now - wait a minute and resend."
             elif exc.status in (503, 500, 502, 504):

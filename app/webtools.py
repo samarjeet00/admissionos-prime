@@ -48,8 +48,40 @@ LOCAL_TOOLS: list[dict[str, Any]] = [
             "required": ["url"],
         },
     },
+    {
+        "name": "reference_sheet_tab",
+        "description": ("Read one tab of the Admissions reference workbook 'Date Wise Performance Comparision - CCC' (read-only, "
+                        "cached). Use it to compare a specific date or month across sessions, to see day-wise registrations or "
+                        "admissions, or to check how past deadlines performed. Tabs: Domestic REG, Domestic ADM, Goa Campus REG, "
+                        "Goa Campus ADM, Online - July Intake, Online - Jan Intake, Last Dates Performance, Board Exam & Result "
+                        "Dates, Entrance Exam & Result Dates, CCC. Rows are returned as a markdown table with the sheet's own headers."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tab": {"type": "string", "description": "Exact tab name, e.g. 'Domestic REG' or 'Last Dates Performance'"},
+                "max_rows": {"type": "integer", "description": "Rows to return, default 120"},
+            },
+            "required": ["tab"],
+        },
+    },
 ]
 LOCAL_TOOL_NAMES = {t["name"] for t in LOCAL_TOOLS}
+
+
+async def reference_sheet_tab(tab: str, max_rows: int = 120) -> tuple[str, bool]:
+    from .sheets import reference
+    if reference.status != "ok":
+        return (f"reference sheet not available: {reference.error}", True)
+    wanted = (tab or "").strip().lower()
+    match = next((t for t in reference.all_tabs if t.lower() == wanted), None) or \
+        next((t for t in reference.all_tabs if wanted and wanted in t.lower()), None)
+    if not match:
+        return (f"No tab named '{tab}'. Available: {', '.join(reference.all_tabs)}", True)
+    try:
+        rows = await reference.get_tab(match)
+    except Exception as exc:  # noqa: BLE001
+        return (f"could not read tab '{match}': {type(exc).__name__}: {exc}", True)
+    return (f"Tab: {match} ({len(rows)} rows)\n\n" + reference.rows_to_table(rows, max(10, min(int(max_rows or 120), 400))), False)
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AdmissionOSPrime/1.0"
 
@@ -132,4 +164,6 @@ async def call_local(name: str, args: dict[str, Any]) -> tuple[str, bool] | None
         return await web_search(str(args.get("query", "")), args.get("max_results") or 6)
     if name == "fetch_url":
         return await fetch_url(str(args.get("url", "")), args.get("max_chars") or 12000)
+    if name == "reference_sheet_tab":
+        return await reference_sheet_tab(str(args.get("tab", "")), args.get("max_rows") or 120)
     return None

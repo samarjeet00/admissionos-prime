@@ -108,13 +108,29 @@ festival calendar with impact ratings, playbook weights, intake targets, scholar
 Edit the markdown — no restart. Dates tagged `[verify]` are typical windows not yet confirmed against an official
 notification; the model flags them when they drive a recommendation. Change the tag to `[verified]` once confirmed.
 
-## 5b. Historical exam & result dates (Google Sheet, read-only)
+## 5b. The reference workbook (Google Sheet, read-only)
 
-The bot reads two tabs of the Admissions reference sheet - **Board Exam & Result Dates** and
-**Entrance Exam & Result Dates** - and puts them in the model's context as verified history, so date
-recommendations are anchored to what actually happened in previous years. Nothing else in the workbook is read,
-and the integration cannot write: it authenticates as a Google **service account** with the
+Three tabs of "Date Wise Performance Comparision - CCC" are always in the model's context - **Board Exam &
+Result Dates**, **Entrance Exam & Result Dates** and **Last Dates Performance** (every past deadline and the
+registrations it produced). The other seven tabs (day-wise Domestic / Goa / Online registrations and admissions,
+CCC yield) are read on demand through the `reference_sheet_tab` tool, so the bot can compare any date or month
+across sessions. The integration cannot write: it authenticates as a Google **service account** with the
 `spreadsheets.readonly` scope only.
+
+## 5c. Web verification, answer structure, deadline briefs
+
+- **Internet is the authority for dates.** The bot has keyless `web_search` and `fetch_url` tools and a hard rule:
+  any exam, result, notification, counselling, festival or holiday date is checked on the official site before
+  it is used, even if memory has a value. Every number and date carries a source label - `[web: domain]`,
+  `[sheet]`, `[portal]`, `[memory]` or `[estimate]`.
+- **Every answer is structured.** Strategy questions use the executive format; factual lookups use the compact
+  Answer / Why it matters / Risk / Opportunity / Action / Confidence / Alternative format.
+- **Deadline questions** (`/deadline`, or any message containing "last date", "deadline", "close admissions" ...)
+  produce a Deadline Decision Brief: web-verified calendar check, what history says (from Last Dates Performance
+  and the day-wise tabs), a scored candidate-date table, one-line "why not" for each rejected date, the
+  recommended date with announcement and single-extension dates, expected deadline-day registrations, campus /
+  programme exceptions, risks, confidence, alternative, next action.
+- Replies on Telegram end with `⏱ seconds · model · tools used`.
 
 One-time setup:
 1. Google Cloud Console -> create (or pick) a project -> **APIs & Services -> Enable** the *Google Sheets API*.
@@ -142,3 +158,12 @@ A `/daily` run typically makes 5–10 portal calls and takes one to three minute
   more than this bot's gate: 77 accounts hold System Administrator and 533 hold "Manage All" in the portal, and
   test / dummy roles are active.
 - `ANTHROPIC_FALLBACKS=1` uses the Claude API's server-side refusal fallback; set `0` on Bedrock / Vertex.
+
+## 8. Which model powers the brain
+
+`LLM_PROVIDER` in `.env`: `gemini` (Google Developer API **free tier** - no billing; auto-picks the newest Flash
+model, health-probes it at startup, fails over instantly when Google is overloaded), `anthropic` (Claude Opus 5 via
+prepaid credits - best quality) or `vertex` (Claude billed to a Google Cloud project). `LLM_FALLBACK_PROVIDER`
+(default `anthropic`) is used automatically for a question when the primary's quota is exhausted; it only helps
+if that account has credits. Free-tier note: Google may use unpaid-tier prompts to improve its products - keep
+identifiable student data out of the bot on that tier.
