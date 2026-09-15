@@ -93,6 +93,8 @@ class TelegramBot:
         last_edit = 0.0
         final_text = ""
         notices: list[str] = []
+        started = time.monotonic()
+        tools_used: list[str] = []
 
         async def refresh(force: bool = False) -> None:
             nonlocal last_edit
@@ -116,6 +118,8 @@ class TelegramBot:
                     await refresh()
                 elif ev.kind == "tool_result":
                     idx = running.pop(ev.name, None)
+                    if ev.name not in tools_used:
+                        tools_used.append(ev.name)
                     line = f"{'✓' if ev.ok else '✕'} {ev.name} ({ev.seconds}s)"
                     if idx is not None:
                         progress[idx] = line
@@ -135,6 +139,10 @@ class TelegramBot:
             pass
         if notices:
             final_text = (final_text + "\n\n" if final_text else "") + "\n".join(f"⚠️ {n}" for n in notices)
+        footer = f"_⏱ {time.monotonic() - started:.0f}s · {engine.model_name()}"
+        if tools_used:
+            footer += " · tools: " + ", ".join(tools_used[:6])
+        final_text = f"{final_text}\n\n{footer}_"
         for chunk in formatting.render(final_text, "telegram"):
             await self.send(chat_id, chunk)
 

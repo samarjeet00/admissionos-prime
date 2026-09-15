@@ -27,3 +27,7 @@ Status legend: [verified] = confirmed against an official notification. [verify]
 Recorded exam and result dates from previous years come from the Admissions reference Google Sheet (tabs
 "Board Exam & Result Dates" and "Entrance Exam & Result Dates"), loaded read-only into context as the
 HISTORICAL REFERENCE section. Prefer those actuals over the [verify] windows above when estimating this year.
+
+## Defence / civil-service entrances (relevant to BA/BSc/B.Tech and Law aspirants)
+- UPSC CDS 1 2027: notification and application open 2 Dec 2026, last date 22 Dec 2026, exam Sunday 11 Apr 2027 [verified: upsc.gov.in calendar, via Admissions team 15 Sep 2026]. CDS 2 is usually a Sunday in September [verify].
+- UPSC NDA 1 2027: usually the same Sunday as CDS 1 (11 Apr 2027) [verify]. For any other UPSC / SSC / defence date, use web_search on upsc.gov.in before answering.

@@ -1,9 +1,10 @@
 """Channel-independent conversation engine: takes a message from an enrolled user,
-runs the model + portal-tools loop, and yields progress events and the final answer.
+runs the model + tools loop, and yields progress events and the final answer.
 
 Two interchangeable brains (LLM_PROVIDER): Claude (Anthropic API or Vertex AI) and Gemini
-(Google's free-tier Developer API). Conversation history is kept per user in the format of
-whichever brain is active.
+(Google's free-tier Developer API). Tools = portal tools for the user's tier + local web
+tools (search / fetch) for everyone. Conversation history is kept per user in the format
+of whichever brain is active.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 
-from . import brain, config
+from . import brain, config, webtools
 from .mcp_bridge import bridge
 
 log = logging.getLogger("admissionos.engine")
@@ -54,6 +55,10 @@ else:
 USE_FALLBACKS = config.ANTHROPIC_FALLBACKS and PROVIDER == "anthropic"   # server-side fallbacks are Claude API only
 
 
+def model_name() -> str:
+    return (gemini.model or "gemini") if gemini else config.ANTHROPIC_MODEL
+
+
 @dataclass
 class Event:
     kind: str                 # command | tool_start | tool_result | notice | error | final
@@ -86,12 +91,18 @@ def _trim(history: list[dict[str, Any]]) -> None:
             del history[0]
 
 
+def _tools_for(user: dict[str, Any]) -> tuple[list[dict[str, Any]], set[str]]:
+    tools = brain.tools_for_tier(bridge.tools, user["tier"]) + webtools.LOCAL_TOOLS
+    return tools, {t["name"] for t in tools}
+
+
 async def _execute_tool(name: str, args: dict[str, Any], allowed: set[str], user: dict[str, Any]) -> dict[str, Any]:
     t0 = time.monotonic()
     if name not in allowed:
         text, is_error = (f"Access denied: `{name}` is not available to the {user['tier']} tier.", True)
     else:
-        text, is_error = await bridge.call(name, dict(args or {}))
+        local = await webtools.call_local(name, dict(args or {}))
+        text, is_error = local if local is not None else await bridge.call(name, dict(args or {}))
     return {"name": name, "text": text, "is_error": is_error, "seconds": round(time.monotonic() - t0, 1)}
 
 
@@ -144,17 +155,15 @@ async def _run_turn_claude(user: dict[str, Any], key: str, message: str) -> Asyn
     _trim(history)
     start_len = min(start_len, len(history) - 1)
 
-    tools = brain.tools_for_tier(bridge.tools, user["tier"])
-    allowed = {t["name"] for t in tools}
+    tools, allowed = _tools_for(user)
     request: dict[str, Any] = dict(
         model=config.ANTHROPIC_MODEL,
         max_tokens=config.ANTHROPIC_MAX_TOKENS,
         system=brain.build_system_prompt(),
         thinking={"type": "adaptive"},
-        output_config={"effort": config.ANTHROPIC_EFFORT},
+        output_config={"effort": config.ANTHROPIC_EFFORT if command else "medium"},
+        tools=tools,
     )
-    if tools:
-        request["tools"] = tools
     if USE_FALLBACKS:
         request["betas"] = ["server-side-fallback-2026-07-01"]
         request["extra_body"] = {"fallbacks": "default"}
@@ -194,6 +203,8 @@ async def _run_turn_claude(user: dict[str, Any], key: str, message: str) -> Asyn
 
         if final.stop_reason == "tool_use":
             calls = [b for b in final.content if b.type == "tool_use"]
+            for b in calls:
+                yield Event("tool_start", name=b.name)
             results = await asyncio.gather(*(_execute_tool(b.name, b.input or {}, allowed, user) for b in calls))
             for b, r in zip(calls, results):
                 r["id"] = b.id
@@ -232,13 +243,13 @@ async def _run_turn_gemini(user: dict[str, Any], key: str, message: str) -> Asyn
     _trim(history)
     start_len = min(start_len, len(history) - 1)
 
-    tools = brain.tools_for_tier(bridge.tools, user["tier"])
-    allowed = {t["name"] for t in tools}
+    tools, allowed = _tools_for(user)
     system = "\n\n".join(block["text"] for block in brain.build_system_prompt())
+    thinking = "high" if command else "low"          # standing deliverables get deep reasoning; lookups stay fast
 
     for _round in range(config.MAX_TOOL_ROUNDS):
         try:
-            response = await gemini.generate(system, history, tools)
+            response = await gemini.generate(system, history, tools, thinking=thinking)
             parts, calls, text, finish = llm_gemini.extract(response)
         except llm_gemini.GeminiError as exc:
             del history[start_len:]

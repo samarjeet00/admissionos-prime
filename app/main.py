@@ -30,6 +30,15 @@ async def main() -> None:
     else:
         log.info("Reference sheet disabled (%s)", reference.error or "no service-account key")
 
+    from . import engine
+    if engine.gemini is not None:
+        try:
+            pinned = await engine.gemini.probe()          # pick a responsive model before the first user message
+            log.info("Gemini ready: %s", pinned or "no model answered the probe - will retry on first message")
+        except Exception as exc:  # noqa: BLE001
+            log.error("Gemini probe failed: %s", exc)
+        tasks.append(asyncio.create_task(engine.gemini.probe_forever(), name="gemini-probe"))
+
     if config.TELEGRAM_BOT_TOKEN:
         from .telegram_bot import TelegramBot
         tasks.append(asyncio.create_task(TelegramBot(config.TELEGRAM_BOT_TOKEN).run(), name="telegram"))
