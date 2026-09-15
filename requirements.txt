@@ -7,3 +7,4 @@ tzdata>=2024.1
 google-auth>=2.30
 requests>=2.31
 ddgs>=9.0
+pyzipper>=0.3

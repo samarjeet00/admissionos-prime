@@ -181,7 +181,18 @@ identifiable student data out of the bot on that tier.
 
 ## 9. Moving the bot to another machine (GitHub is the source of truth)
 
-Everything except secrets is in the repository. Three files are deliberately git-ignored and must be copied by hand:
-`.env` (API keys and tokens), `data/users.json` (who is enrolled), `data/google-service-account.json` (sheet access).
-Clone, run `setup.bat`, drop those three files into place, run `run.bat`. Deleting the folder on the old machine
-stops the bot there - only one copy should run at a time (two copies fight over Telegram updates).
+Everything is in the private repository except the key files (`.env`, `data/users.json`,
+`data/google-service-account.json`, `data/access_requests.json`). Those travel inside **`secrets.zip`**, an AES-256
+encrypted archive that the administrator creates and pushes with `save-secrets.bat` (it asks for a passphrase; the
+passphrase is never stored in the repository). On any PC:
+
+```bat
+git clone https://github.com/samarjeetsingh45296-hue/admissionos-prime.git
+cd admissionos-prime
+setup.bat
+restore-secrets.bat
+run.bat
+```
+
+`restore-secrets.bat` asks for the same passphrase and puts the four files back in place. After enrolling users or
+changing `.env` on the machine that runs the bot, run `save-secrets.bat` again. Run only one copy of the bot at a time.
