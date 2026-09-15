@@ -20,7 +20,22 @@ log = logging.getLogger("admissionos.engine")
 IST = ZoneInfo("Asia/Kolkata")
 MAX_HISTORY_MESSAGES = 60
 
-client = anthropic.AsyncAnthropic()
+def _make_client() -> Any:
+    """Anthropic API by default; Google Vertex AI when CLAUDE_PROVIDER=vertex (billed to the GCP project)."""
+    if config.CLAUDE_PROVIDER == "vertex":
+        import os
+        from anthropic import AsyncAnthropicVertex
+        # Reuse the Sheets service-account key for Vertex unless GOOGLE_APPLICATION_CREDENTIALS is already set
+        os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", config.GOOGLE_SERVICE_ACCOUNT_FILE)
+        if not config.VERTEX_PROJECT_ID:
+            raise RuntimeError("CLAUDE_PROVIDER=vertex needs VERTEX_PROJECT_ID in .env")
+        log.info("Claude via Vertex AI: project %s, region %s", config.VERTEX_PROJECT_ID, config.VERTEX_REGION)
+        return AsyncAnthropicVertex(project_id=config.VERTEX_PROJECT_ID, region=config.VERTEX_REGION)
+    return anthropic.AsyncAnthropic()
+
+
+client = _make_client()
+USE_FALLBACKS = config.ANTHROPIC_FALLBACKS and config.CLAUDE_PROVIDER == "anthropic"   # server-side fallbacks are Claude API only
 conversations: dict[str, list[dict[str, Any]]] = defaultdict(list)
 locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
@@ -111,10 +126,10 @@ async def _run_turn(user: dict[str, Any], key: str, message: str) -> AsyncIterat
     )
     if tools:
         request["tools"] = tools
-    if config.ANTHROPIC_FALLBACKS:
+    if USE_FALLBACKS:
         request["betas"] = ["server-side-fallback-2026-07-01"]
         request["extra_body"] = {"fallbacks": "default"}
-    messages_api = client.beta.messages if config.ANTHROPIC_FALLBACKS else client.messages
+    messages_api = client.beta.messages if USE_FALLBACKS else client.messages
 
     for _round in range(config.MAX_TOOL_ROUNDS):
         try:

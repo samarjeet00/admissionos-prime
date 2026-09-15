@@ -24,6 +24,10 @@ def _env(name: str, default: str | None = None) -> str | None:
 
 
 # --- Claude ---------------------------------------------------------------
+# Where Claude is billed: "anthropic" (console.anthropic.com credits) or "vertex" (Google Cloud project)
+CLAUDE_PROVIDER = (_env("CLAUDE_PROVIDER", "anthropic") or "anthropic").lower()
+VERTEX_PROJECT_ID = _env("VERTEX_PROJECT_ID")
+VERTEX_REGION = _env("VERTEX_REGION", "global")
 ANTHROPIC_MODEL = _env("ANTHROPIC_MODEL", "claude-opus-5")
 ANTHROPIC_EFFORT = _env("ANTHROPIC_EFFORT", "high")          # low | medium | high | xhigh | max
 ANTHROPIC_MAX_TOKENS = int(_env("ANTHROPIC_MAX_TOKENS", "32000"))
