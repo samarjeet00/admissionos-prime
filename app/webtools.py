@@ -106,14 +106,43 @@ def _search_sync(query: str, max_results: int) -> list[dict[str, str]]:
     return DDGS().text(query, max_results=max_results) or []
 
 
+_google_exhausted_until = 0.0
+
+
+async def _google_search(query: str, max_results: int) -> list[dict[str, str]] | None:
+    """Google Programmable Search JSON API (free: 100 queries/day). None -> not configured / quota hit / error."""
+    global _google_exhausted_until
+    import time as _time
+    if not (config.GOOGLE_CSE_KEY and config.GOOGLE_CSE_ID) or _time.time() < _google_exhausted_until:
+        return None
+    params = {"key": config.GOOGLE_CSE_KEY, "cx": config.GOOGLE_CSE_ID, "q": query, "num": min(max_results, 10), "gl": "in", "hl": "en"}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as http:
+            r = await http.get("https://www.googleapis.com/customsearch/v1", params=params)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("google search failed: %s", exc)
+        return None
+    if r.status_code == 429 or (r.status_code == 403 and "quota" in r.text.lower()):
+        _google_exhausted_until = _time.time() + 3600          # daily quota hit - use DuckDuckGo for the next hour
+        log.warning("google search quota exhausted - falling back to DuckDuckGo")
+        return None
+    if r.status_code >= 400:
+        log.warning("google search HTTP %s: %s", r.status_code, r.text[:200])
+        return None
+    items = r.json().get("items") or []
+    return [{"title": i.get("title", ""), "href": i.get("link", ""), "body": i.get("snippet", "")} for i in items]
+
+
 async def web_search(query: str, max_results: int = 6) -> tuple[str, bool]:
     max_results = max(1, min(int(max_results or 6), 10))
-    try:
-        results = await asyncio.wait_for(asyncio.to_thread(_search_sync, query, max_results), timeout=15)
-    except asyncio.TimeoutError:
-        return ("web_search timed out - try a shorter query", True)
-    except Exception as exc:  # noqa: BLE001
-        return (f"web_search failed: {type(exc).__name__}: {exc}", True)
+    results = await _google_search(query, max_results)
+    if results is None:
+        try:
+            results = await asyncio.wait_for(asyncio.to_thread(_search_sync, query, max_results), timeout=15)
+        except asyncio.TimeoutError:
+            return ("web_search timed out - try a shorter query", True)
+        except Exception as exc:  # noqa: BLE001
+            return (f"web_search failed: {type(exc).__name__}: {exc}", True)
     if not results:
         return ("No results. Try different words or drop the site: filter.", False)
     lines = [f"{i + 1}. {r.get('title', '').strip()}\n   {r.get('href', '')}\n   {(r.get('body') or '').strip()[:300]}"

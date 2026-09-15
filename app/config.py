@@ -39,6 +39,9 @@ GEMINI_RPM_BUDGET = int(_env("GEMINI_RPM_BUDGET", "14"))  # self-imposed request
 GEMINI_READ_TIMEOUT = float(_env("GEMINI_READ_TIMEOUT", "90"))  # seconds to wait for one Gemini answer before hopping
 GEMINI_MAX_HOPS = int(_env("GEMINI_MAX_HOPS", "5"))       # model failovers per sweep on 5xx (two sweeps per request)
 WEB_SEARCH_BUDGET = int(_env("WEB_SEARCH_BUDGET", "3"))   # web searches allowed per answer (hard cap, saves time and quota)
+# Google Programmable Search (free 100 queries/day): faster, better results for Indian official sites; DuckDuckGo otherwise
+GOOGLE_CSE_KEY = _env("GOOGLE_CSE_KEY")
+GOOGLE_CSE_ID = _env("GOOGLE_CSE_ID")
 FETCH_BUDGET = int(_env("FETCH_BUDGET", "1"))             # page fetches allowed per answer
 
 # Mistral (free "Experiment" plan at console.mistral.ai) or any OpenAI-compatible endpoint
