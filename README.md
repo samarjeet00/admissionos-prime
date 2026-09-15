@@ -13,42 +13,50 @@ WhatsApp (Cloud API      │                        │ tool calls
                                           PUAP MCP server ──▶ admissions.paruluniversity.ac.in (read-only)
 ```
 
-## 1. Setup (Windows, PowerShell)
+## 1. Setup (Windows - double-click or run in CMD)
 
-```powershell
-cd "C:\Users\Asus\Downloads\New folder\admissionos"
-.\.venv\Scripts\python -m pip install -r requirements.txt
-copy .env.example .env      # then fill it in
+Prerequisite: Python 3.12+ from python.org with "Add python.exe to PATH" ticked, and Git.
+
+```bat
+git clone https://github.com/samarjeetsingh45296-hue/admissionos-prime.git
+cd admissionos-prime
+setup.bat
 ```
+
+`setup.bat` creates the virtual environment, installs packages, copies `.env.example` to `.env` and opens it in
+Notepad. Fill in these and save:
 
 | `.env` variable | What to put |
 |---|---|
-| `ANTHROPIC_API_KEY` | Your Anthropic API key (console.anthropic.com). |
+| `ANTHROPIC_API_KEY` | Your Anthropic API key (console.anthropic.com → API Keys). |
 | `PUAP_MCP_URL` (+ `PUAP_MCP_TOKEN`) | Streamable-HTTP URL of the PUAP MCP server — the same endpoint added to Claude as the admissions connector (it runs from `/opt/puap-mcp` on its host). Or `PUAP_MCP_COMMAND` to launch it locally over stdio. |
 | `TELEGRAM_BOT_TOKEN` | From **@BotFather** → `/newbot`. Long polling — works from any machine, no public URL. |
-| `WHATSAPP_*` | From **Meta for Developers** → your app → WhatsApp (see §3). Needs a public HTTPS URL for the webhook. |
+| `WHATSAPP_*` | From **Meta for Developers** → your app → WhatsApp (see §3). Needs a public HTTPS URL. Leave empty to run Telegram only. |
 
-Run:
+Start the bot:
 
-```powershell
-.\run.ps1
+```bat
+run.bat
 ```
 
-It starts whichever channels are configured. Leave the WhatsApp variables empty to run Telegram only.
+Leave that window open (Ctrl+C stops it). Linux / macOS: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cp .env.example .env && .venv/bin/python -m app.main`.
 
 ## 2. Enrol users (this is the authentication layer)
 
 Nobody gets an answer until an administrator enrols their Telegram ID or WhatsApp number with a tier.
 Unknown senders receive `ACCESS DENIED` — on Telegram the denial shows their ID so you can enrol it.
+Open a **second** CMD window in the project folder:
 
-```powershell
-.\.venv\Scripts\python scripts\manage_users.py add dm --name "Digital Marketing" --tier executive --telegram 123456789 --whatsapp 919876543210
-.\.venv\Scripts\python scripts\manage_users.py list
-.\.venv\Scripts\python scripts\manage_users.py disable dm       # takes effect on their next message
+```bat
+users.bat add dm --name "Digital Marketing" --tier executive --telegram 123456789
+users.bat list
+users.bat disable dm
 ```
 
-Why no password: on WhatsApp the phone number is SIM-bound and on Telegram the account ID is
-2FA-protected by the platform; a password typed into the chat would just sit in the message history.
+Changes apply on the person's next message — no restart.
+
+Why no password: on WhatsApp the phone number is SIM-bound and on Telegram the account is protected by the
+platform; a password typed into the chat would just sit in the message history.
 Only private (1-to-1) chats are answered — group messages are ignored so nobody's data leaks into a group.
 
 | Tier | Intended for | Gets |
@@ -109,7 +117,7 @@ A `/daily` run typically makes 5–10 portal calls and takes one to three minute
 
 ## 7. Production notes
 
-- Run it as a service (NSSM / Task Scheduler on Windows, systemd on Linux) on a machine that can reach both the
+- Run it 24/7 as a service: Task Scheduler (run `run.bat` at startup) or NSSM on Windows, systemd on Linux on a machine that can reach both the
   Claude API and the PUAP MCP server. Conversations are in memory and reset on restart.
 - Keep `data/users.json` and `.env` out of version control (already in `.gitignore`).
 - The PUAP MCP server should enforce scope server-side as well (defence in depth). Portal RBAC hygiene matters
