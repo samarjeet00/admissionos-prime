@@ -245,6 +245,8 @@ async def _run_turn_gemini(user: dict[str, Any], key: str, message: str) -> Asyn
             log.error("Gemini error %s: %s", exc.status, exc.message)
             if exc.status == 429:
                 text = "The free Gemini quota is busy right now - wait a minute and resend."
+            elif exc.status in (503, 500, 502, 504):
+                text = "Google's Gemini service is overloaded at the moment (all fallback models busy). Please resend in a minute."
             elif exc.status == 403:
                 text = "Gemini API access is not enabled for the bot's Google project. The administrator needs to enable it in Google Cloud Console."
             elif exc.status == 200:
@@ -265,12 +267,14 @@ async def _run_turn_gemini(user: dict[str, Any], key: str, message: str) -> Asyn
             for c in calls:
                 yield Event("tool_start", name=c.get("name", "?"))
             results = await asyncio.gather(*(_execute_tool(c.get("name", ""), c.get("args") or {}, allowed, user) for c in calls))
-            for r in results:
+            responses = []
+            for c, r in zip(calls, results):
                 yield Event("tool_result", name=r["name"], ok=not r["is_error"], seconds=r["seconds"])
-            history.append({"role": "user", "parts": [
-                {"functionResponse": {"name": r["name"], "response": {"result": r["text"], "is_error": r["is_error"]}}}
-                for r in results
-            ]})
+                fr: dict[str, Any] = {"name": r["name"], "response": {"result": r["text"], "is_error": r["is_error"]}}
+                if c.get("id"):
+                    fr["id"] = c["id"]          # newer Gemini models pair responses to calls by id
+                responses.append({"functionResponse": fr})
+            history.append({"role": "user", "parts": responses})
             continue
 
         if finish == "MAX_TOKENS":

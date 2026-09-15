@@ -92,25 +92,28 @@ def to_function_declarations(tools: list[dict[str, Any]]) -> list[dict[str, Any]
     return decls
 
 
-def pick_model(names: list[str]) -> str | None:
-    """Prefer the newest plain '-flash' model (free-tier friendly), then any flash, then pro."""
+def rank_models(names: list[str]) -> list[str]:
+    """Newest plain '-flash' models first (free-tier friendly), then flash-latest, then pro models."""
     def version(n: str) -> float:
         m = re.search(r"gemini-(\d+(?:\.\d+)?)", n)
         return float(m.group(1)) if m else 0.0
-    bare = [n for n in names if re.fullmatch(r"models/gemini-\d+(?:\.\d+)?-flash", n)]
-    if bare:
-        return max(bare, key=version)
-    flash = [n for n in names if "flash" in n and not any(x in n for x in ("lite", "image", "tts", "live", "audio", "8b", "exp"))]
-    if flash:
-        return max(flash, key=version)
-    pro = [n for n in names if re.fullmatch(r"models/gemini-\d+(?:\.\d+)?-pro", n)]
-    return max(pro, key=version) if pro else None
+    bare = sorted((n for n in names if re.fullmatch(r"models/gemini-\d+(?:\.\d+)?-flash", n)), key=version, reverse=True)
+    latest = [n for n in names if n == "models/gemini-flash-latest"]
+    pro = sorted((n for n in names if re.fullmatch(r"models/gemini-\d+(?:\.\d+)?-pro", n)), key=version, reverse=True)
+    ranked = bare + latest + pro
+    return [n.replace("models/", "") for n in ranked]
+
+
+def pick_model(names: list[str]) -> str | None:
+    ranked = rank_models(names)
+    return "models/" + ranked[0] if ranked else None
 
 
 class GeminiClient:
     def __init__(self) -> None:
         self._creds: Any = None
         self.model: str | None = config.GEMINI_MODEL if config.GEMINI_MODEL and config.GEMINI_MODEL != "auto" else None
+        self.candidates: list[str] = [self.model] if self.model else []
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0))
 
     # --- auth -----------------------------------------------------------------
@@ -134,14 +137,14 @@ class GeminiClient:
         return headers, {}
 
     # --- API ---------------------------------------------------------------------
-    async def _request(self, method: str, path: str, **kw: Any) -> dict[str, Any]:
+    async def _request(self, method: str, path: str, max_attempts: int = 5, **kw: Any) -> dict[str, Any]:
         headers, params = await self._auth()
         headers.update(kw.pop("headers", {}))
         params.update(kw.pop("params", {}))
-        delay = 10.0
-        for attempt in range(5):
+        delay = 5.0
+        for attempt in range(max_attempts):
             r = await self.http.request(method, f"{API}/{path}", headers=headers, params=params, **kw)
-            if r.status_code in _RETRY_STATUS and attempt < 4:
+            if r.status_code in _RETRY_STATUS and attempt < max_attempts - 1:
                 wait = delay
                 try:
                     for d in (r.json().get("error") or {}).get("details", []):
@@ -167,11 +170,11 @@ class GeminiClient:
             return self.model
         data = await self._request("GET", "models", params={"pageSize": 200})
         names = [m["name"] for m in data.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        choice = pick_model(names)
-        if not choice:
+        self.candidates = rank_models(names)
+        if not self.candidates:
             raise GeminiError(404, "no Gemini model with generateContent is available to this project")
-        self.model = choice.replace("models/", "")
-        log.info("Gemini model: %s (from %d available)", self.model, len(names))
+        self.model = self.candidates[0]
+        log.info("Gemini model: %s (failover order: %s)", self.model, ", ".join(self.candidates[1:6]))
         return self.model
 
     async def generate(self, system: str, contents: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
@@ -183,7 +186,22 @@ class GeminiClient:
         }
         if tools:
             body["tools"] = [{"functionDeclarations": to_function_declarations(tools)}]
-        return await self._request("POST", f"models/{model}:generateContent", json=body)
+        # Try the current model briefly; if it is saturated or quota-limited, fail over down the ranked list.
+        order = [model] + [m for m in getattr(self, "candidates", []) if m != model]
+        last: GeminiError | None = None
+        for i, m in enumerate(order[:6]):
+            try:
+                result = await self._request("POST", f"models/{m}:generateContent", max_attempts=2, json=body)
+                if m != self.model:
+                    log.warning("Gemini failover: %s -> %s", self.model, m)
+                    self.model = m
+                return result
+            except GeminiError as exc:
+                if exc.status not in (429, 503, 500, 502, 504) or i == len(order[:6]) - 1:
+                    raise
+                log.warning("Gemini %s on %s; trying %s", exc.status, m, order[i + 1])
+                last = exc
+        raise last or GeminiError(503, "all Gemini models busy")
 
 
 class GeminiError(Exception):
