@@ -96,7 +96,7 @@ Type them in the chat (Telegram shows them in the `/` menu). Anything after a co
 | `/events` | Exams, results, festivals, holidays in the next 60 days with impact ratings |
 | `/competitors` | Competitor windows, scholarships, likely moves, our counter-moves |
 | `/program <name>` | Full deep-dive for one programme |
-| `/reset`, `/help` | Fresh conversation / list commands |
+| `/reset`, `/reload`, `/help` | Fresh conversation / re-read the reference sheet / list commands |
 
 Plain-English questions work too ("why did B.Pharm applications drop this week?"). Command prompts are in
 `app/brain.py::COMMANDS`.
@@ -107,6 +107,24 @@ Plain-English questions work too ("why did B.Pharm applications drop this week?"
 festival calendar with impact ratings, playbook weights, intake targets, scholarship windows, competitor set.
 Edit the markdown — no restart. Dates tagged `[verify]` are typical windows not yet confirmed against an official
 notification; the model flags them when they drive a recommendation. Change the tag to `[verified]` once confirmed.
+
+## 5b. Historical exam & result dates (Google Sheet, read-only)
+
+The bot reads two tabs of the Admissions reference sheet - **Board Exam & Result Dates** and
+**Entrance Exam & Result Dates** - and puts them in the model's context as verified history, so date
+recommendations are anchored to what actually happened in previous years. Nothing else in the workbook is read,
+and the integration cannot write: it authenticates as a Google **service account** with the
+`spreadsheets.readonly` scope only.
+
+One-time setup:
+1. Google Cloud Console -> create (or pick) a project -> **APIs & Services -> Enable** the *Google Sheets API*.
+2. **IAM & Admin -> Service Accounts -> Create** (any name, no roles needed) -> **Keys -> Add key -> JSON**.
+   Save the downloaded file as `data/google-service-account.json` (git-ignored).
+3. Open the sheet -> **Share** -> add the service account's email (`...@...iam.gserviceaccount.com`) as **Viewer**.
+4. Restart the bot (or send `/reload`). The log shows `reference sheet loaded: ... rows`.
+
+`REFERENCE_SHEET_ID` / `REFERENCE_SHEET_TABS` in `.env` change which sheet and tabs are read; the cache refreshes
+every `REFERENCE_REFRESH_HOURS` (default 6).
 
 ## 6. What a turn looks like
 

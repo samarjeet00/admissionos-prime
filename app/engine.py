@@ -39,7 +39,7 @@ def help_text(user: dict[str, Any]) -> str:
              "", "Ask anything about admissions in plain English, or use a command:", ""]
     for name, spec in brain.COMMANDS.items():
         lines.append(f"/{name} - {spec['description']}")
-    lines += ["", "/reset - start a fresh conversation", "/help - this list",
+    lines += ["", "/reset - start a fresh conversation", "/reload - re-read the exam-dates reference sheet", "/help - this list",
               "", "Add a focus after any command, e.g. `/deadline B.Pharm`."]
     return "\n".join(lines)
 
@@ -65,6 +65,15 @@ async def handle(user: dict[str, Any], key: str, text: str) -> AsyncIterator[Eve
     if lowered in ("/reset", "/new"):
         conversations.pop(key, None)
         yield Event("final", "Conversation cleared. What should we look at?")
+        return
+    if lowered == "/reload":
+        from .sheets import reference
+        ok = await reference.refresh()
+        if ok:
+            counts = ", ".join(f"{tab}: {len(rows)} rows" for tab, rows in reference.tabs.items())
+            yield Event("final", f"Reference sheet reloaded ({counts}). Institutional memory files are re-read on every message.")
+        else:
+            yield Event("final", f"Reference sheet not loaded - {reference.error}")
         return
     if stripped.startswith("/") and stripped[1:].split(" ", 1)[0].lower() not in brain.COMMANDS:
         yield Event("final", f"Unknown command `{stripped.split(' ', 1)[0]}`.\n\n" + help_text(user))

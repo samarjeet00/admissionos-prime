@@ -4,3 +4,5 @@ fastapi>=0.115
 uvicorn>=0.30
 python-dotenv>=1.0
 tzdata>=2024.1
+google-auth>=2.30
+requests>=2.31

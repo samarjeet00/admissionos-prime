@@ -43,7 +43,9 @@ class TelegramBot:
         me = await self.call("getMe")
         self.username = me.get("username", "")
         commands = [{"command": name, "description": spec["title"][:256]} for name, spec in brain.COMMANDS.items()]
-        commands += [{"command": "reset", "description": "Start a fresh conversation"}, {"command": "help", "description": "List commands"}]
+        commands += [{"command": "reset", "description": "Start a fresh conversation"},
+                     {"command": "reload", "description": "Re-read the exam-dates reference sheet"},
+                     {"command": "help", "description": "List commands"}]
         await self.call("setMyCommands", commands=commands)
         log.info("Telegram bot @%s polling", self.username)
         offset: int | None = None

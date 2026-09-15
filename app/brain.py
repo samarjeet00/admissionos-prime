@@ -95,11 +95,17 @@ Write clear, concise English. Use markdown headings, tables for numbers and shor
 
 
 def build_system_prompt() -> list[dict[str, Any]]:
-    """Two blocks: the stable core (cached) and the editable institutional memory (cached separately)."""
-    return [
+    """Stable core, then institutional memory, then the historical-dates reference sheet - each cached separately."""
+    from .sheets import reference  # local import: keeps brain importable without google-auth in tests
+
+    blocks = [
         {"type": "text", "text": CORE_PROMPT, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": "# INSTITUTIONAL MEMORY\n\n" + load_memory(), "cache_control": {"type": "ephemeral"}},
     ]
+    sheet = reference.as_markdown()
+    if sheet:
+        blocks.append({"type": "text", "text": sheet, "cache_control": {"type": "ephemeral"}})
+    return blocks
 
 
 # --- Slash commands ------------------------------------------------------------------

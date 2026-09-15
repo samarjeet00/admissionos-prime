@@ -40,7 +40,14 @@ WHATSAPP_API_VERSION = _env("WHATSAPP_API_VERSION", "v21.0")
 WEBHOOK_HOST = _env("WEBHOOK_HOST", "0.0.0.0")
 WEBHOOK_PORT = int(_env("WEBHOOK_PORT", "8765"))
 
-# --- Paths --------------------------------------------------------------------
+# --- Google Sheets reference data (read-only) --------------------------------------
 DATA_DIR = ROOT / "data"
+GOOGLE_SERVICE_ACCOUNT_FILE = _env("GOOGLE_SERVICE_ACCOUNT_FILE", str(DATA_DIR / "google-service-account.json"))
+REFERENCE_SHEET_ID = _env("REFERENCE_SHEET_ID", "1mgmv4Cc67olcCN-U7vkNC0q-MVD-23F0_UCAdRODyvk")
+REFERENCE_SHEET_TABS = [t.strip() for t in (_env("REFERENCE_SHEET_TABS",
+                        "Board Exam & Result Dates,Entrance Exam & Result Dates") or "").split(",") if t.strip()]
+REFERENCE_REFRESH_HOURS = float(_env("REFERENCE_REFRESH_HOURS", "6"))
+
+# --- Paths --------------------------------------------------------------------
 USERS_FILE = DATA_DIR / "users.json"
 MEMORY_DIR = DATA_DIR / "memory"

@@ -23,6 +23,13 @@ async def main() -> None:
     await bridge.start()
     tasks: list[asyncio.Task] = []
 
+    from .sheets import reference
+    if reference.configured:
+        await reference.refresh()
+        tasks.append(asyncio.create_task(reference.refresh_forever(), name="reference-sheet"))
+    else:
+        log.info("Reference sheet disabled (%s)", reference.error or "no service-account key")
+
     if config.TELEGRAM_BOT_TOKEN:
         from .telegram_bot import TelegramBot
         tasks.append(asyncio.create_task(TelegramBot(config.TELEGRAM_BOT_TOKEN).run(), name="telegram"))

@@ -22,3 +22,8 @@ Status legend: [verified] = confirmed against an official notification. [verify]
 ## Admission-cycle rules of thumb (refine with data)
 - Board-result weeks (mid-May) and JEE / NEET-result weeks (June) are the highest lead-inflow weeks of the year; counselling-round closures (JoSAA / ACPC / MCC) release fallback applicants in July-Sept.
 - Parents commit fee payments after results and after government-counselling outcomes; expect payment spikes 7-14 days after each result or round.
+
+## Historical actuals
+Recorded exam and result dates from previous years come from the Admissions reference Google Sheet (tabs
+"Board Exam & Result Dates" and "Entrance Exam & Result Dates"), loaded read-only into context as the
+HISTORICAL REFERENCE section. Prefer those actuals over the [verify] windows above when estimating this year.
