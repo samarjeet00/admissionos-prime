@@ -24,10 +24,17 @@ def _env(name: str, default: str | None = None) -> str | None:
 
 
 # --- Claude ---------------------------------------------------------------
-# Where Claude is billed: "anthropic" (console.anthropic.com credits) or "vertex" (Google Cloud project)
-CLAUDE_PROVIDER = (_env("CLAUDE_PROVIDER", "anthropic") or "anthropic").lower()
+# Which model service powers the brain:
+#   anthropic = Claude via console.anthropic.com credits (best quality)
+#   vertex    = Claude via Google Cloud Vertex AI (billed to the GCP project)
+#   gemini    = Google Gemini Developer API (free tier; no billing needed)
+LLM_PROVIDER = (_env("LLM_PROVIDER") or _env("CLAUDE_PROVIDER") or "anthropic").lower()
+CLAUDE_PROVIDER = LLM_PROVIDER
 VERTEX_PROJECT_ID = _env("VERTEX_PROJECT_ID")
 VERTEX_REGION = _env("VERTEX_REGION", "global")
+GEMINI_API_KEY = _env("GEMINI_API_KEY")                 # optional; otherwise the service account is used
+GEMINI_PROJECT_ID = _env("GEMINI_PROJECT_ID") or VERTEX_PROJECT_ID
+GEMINI_MODEL = _env("GEMINI_MODEL", "auto")             # auto = newest flash model available
 ANTHROPIC_MODEL = _env("ANTHROPIC_MODEL", "claude-opus-5")
 ANTHROPIC_EFFORT = _env("ANTHROPIC_EFFORT", "high")          # low | medium | high | xhigh | max
 ANTHROPIC_MAX_TOKENS = int(_env("ANTHROPIC_MAX_TOKENS", "32000"))
