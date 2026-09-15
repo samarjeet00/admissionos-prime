@@ -48,9 +48,9 @@ Unknown senders receive `ACCESS DENIED` — on Telegram the denial shows their I
 Open a **second** CMD window in the project folder:
 
 ```bat
-users.bat add dm --name "Digital Marketing" --tier executive --telegram 123456789
+users.bat add samar --name "Samar" --tier executive --telegram 123456789
 users.bat list
-users.bat disable dm
+users.bat disable samar
 ```
 
 Changes apply on the person's next message — no restart.

@@ -1,11 +1,11 @@
 """Enrol AdmissionOS users by their Telegram ID and/or WhatsApp number.
 
-  python scripts/manage_users.py add dm --name "Digital Marketing" --tier executive --telegram 123456789 --whatsapp 919876543210
-  python scripts/manage_users.py set dm --whatsapp 919876543210      (add or change a channel / tier / name)
+  python scripts/manage_users.py add samar --name "Samar" --tier executive --telegram 123456789 --whatsapp 919876543210
+  python scripts/manage_users.py set samar --whatsapp 919876543210      (add or change a channel / tier / name)
   python scripts/manage_users.py list
-  python scripts/manage_users.py disable dm
-  python scripts/manage_users.py enable dm
-  python scripts/manage_users.py remove dm
+  python scripts/manage_users.py disable samar
+  python scripts/manage_users.py enable samar
+  python scripts/manage_users.py remove samar
 
 Telegram ID: the bot replies with it when an unknown person messages it (or use @userinfobot).
 WhatsApp: full international number, digits only (91 + 10-digit mobile for India).
