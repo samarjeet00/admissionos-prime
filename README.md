@@ -162,8 +162,11 @@ A `/daily` run typically makes 5–10 portal calls and takes one to three minute
 ## 8. Which model powers the brain
 
 `LLM_PROVIDER` in `.env`: `gemini` (Google Developer API **free tier** - no billing; auto-picks the newest Flash
-model, health-probes it at startup, fails over instantly when Google is overloaded), `anthropic` (Claude Opus 5 via
-prepaid credits - best quality) or `vertex` (Claude billed to a Google Cloud project). `LLM_FALLBACK_PROVIDER`
-(default `anthropic`) is used automatically for a question when the primary's quota is exhausted; it only helps
-if that account has credits. Free-tier note: Google may use unpaid-tier prompts to improve its products - keep
+model, health-probes it at startup, budgets itself to 14 requests/min, waits on quota hits and fails over to other
+Flash / Flash-Lite models when Google is overloaded), `mistral` (free Experiment plan), `openai_compat` (any
+OpenAI-compatible endpoint - NVIDIA build.nvidia.com free key with `nvidia/nemotron-3-super-120b-a12b` is set up),
+`anthropic` (Claude Opus 5 via prepaid credits - best quality) or `vertex` (Claude billed to a Google Cloud project).
+`LLM_FALLBACK_PROVIDERS` (default `mistral,openai_compat,anthropic`) are tried in order for a question when the
+primary is rate-limited or overloaded; unconfigured ones are skipped. Measured: Gemini lookups 20-45 s, briefs
+60-90 s when healthy; NVIDIA backup ~5 min per brief. Free-tier note: Google may use unpaid-tier prompts to improve its products - keep
 identifiable student data out of the bot on that tier.
