@@ -77,6 +77,9 @@ class ReferenceSheet:
                         if response.status_code == 400 and "Unable to parse range" in response.text:
                             raise RuntimeError(f"tab '{tab}' not found in the sheet - check the exact tab name")
                         if response.status_code == 403:
+                            detail = (response.json().get("error") or {}).get("message", "") if "json" in response.headers.get("content-type", "") else ""
+                            if "has not been used" in detail or "is disabled" in detail:
+                                raise RuntimeError(f"Google Sheets API is not enabled for the service account's project - {detail}")
                             raise RuntimeError(f"no access to the sheet - share it (Viewer) with {self.service_account_email}")
                         response.raise_for_status()
                         rows = response.json().get("values", [])
