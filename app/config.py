@@ -36,7 +36,7 @@ GEMINI_API_KEY = _env("GEMINI_API_KEY")                 # optional; otherwise th
 GEMINI_PROJECT_ID = _env("GEMINI_PROJECT_ID") or VERTEX_PROJECT_ID
 GEMINI_MODEL = _env("GEMINI_MODEL", "auto")             # auto = newest flash model available
 GEMINI_RPM_BUDGET = int(_env("GEMINI_RPM_BUDGET", "14"))  # self-imposed requests/minute (free tier shared cap ~20)
-GEMINI_MAX_HOPS = int(_env("GEMINI_MAX_HOPS", "2"))       # model failovers per request on 5xx
+GEMINI_MAX_HOPS = int(_env("GEMINI_MAX_HOPS", "3"))       # model failovers per sweep on 5xx (two sweeps per request)
 
 # Mistral (free "Experiment" plan at console.mistral.ai) or any OpenAI-compatible endpoint
 MISTRAL_API_KEY = _env("MISTRAL_API_KEY")

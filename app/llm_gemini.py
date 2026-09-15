@@ -296,8 +296,8 @@ class GeminiClient:
 
         last: GeminiError | None = None
         quota_waits = 0
-        hops = 0
         for sweep in range(2):                       # two passes over the list; short pause between them
+            hops = 0
             for m in self._order():
                 if hops >= config.GEMINI_MAX_HOPS:   # every hop is a request against the shared quota
                     break
