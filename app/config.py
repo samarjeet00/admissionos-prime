@@ -8,9 +8,15 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 
+_PLACEHOLDERS = ("<", "change-me", "sk-ant-...", "...")
+
+
 def _env(name: str, default: str | None = None) -> str | None:
-    value = os.getenv(name)
-    return value if value not in (None, "") else default
+    """Read a setting; untouched .env.example placeholders count as unset."""
+    value = (os.getenv(name) or "").strip()
+    if not value or any(p in value for p in _PLACEHOLDERS):
+        return default
+    return value
 
 
 # --- Claude ---------------------------------------------------------------
