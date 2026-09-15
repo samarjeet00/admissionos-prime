@@ -3,3 +3,4 @@
 data/users.json
 __pycache__/
 *.log
+tools/
