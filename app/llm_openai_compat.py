@@ -44,7 +44,7 @@ class OpenAICompatClient:
         self.api_key = api_key
         self.model = model
         self.name = name
-        self.http = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0))
+        self.http = httpx.AsyncClient(timeout=httpx.Timeout(20.0, read=150.0))   # backup brains must fail fast
 
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], max_tokens: int) -> dict[str, Any]:
         body: dict[str, Any] = {"model": self.model, "messages": messages, "temperature": 0.3, "max_tokens": max_tokens}
