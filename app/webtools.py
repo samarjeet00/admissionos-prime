@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 import httpx2 as httpx
 
+from . import config
+
 log = logging.getLogger("admissionos.web")
 
 LOCAL_TOOLS: list[dict[str, Any]] = [
