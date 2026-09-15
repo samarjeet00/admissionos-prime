@@ -204,6 +204,14 @@ async def handle(user: dict[str, Any], key: str, text: str) -> AsyncIterator[Eve
     if lowered in ("/start", "/help", "help"):
         yield Event("final", help_text(user))
         return
+    if lowered in ("/cancel", "cancel", "stop"):
+        task = active_tasks.get(key)
+        if task and not task.done():
+            task.cancel()
+            yield Event("final", "Cancelled the previous request. Ask again whenever you are ready.")
+        else:
+            yield Event("final", "Nothing is running right now.")
+        return
     if lowered in ("/reset", "/new"):
         conversations.pop(key, None)
         yield Event("final", "Conversation cleared. What should we look at?")
@@ -221,14 +229,6 @@ async def handle(user: dict[str, Any], key: str, text: str) -> AsyncIterator[Eve
         yield Event("final", f"Unknown command `{stripped.split(' ', 1)[0]}`.\n\n" + help_text(user))
         return
     lock = locks[key]
-    if lowered in ("/cancel", "cancel", "stop"):
-        task = active_tasks.get(key)
-        if task and not task.done():
-            task.cancel()
-            yield Event("final", "Cancelled the previous request. Ask again whenever you are ready.")
-        else:
-            yield Event("final", "Nothing is running right now.")
-        return
     if lock.locked():
         yield Event("error", "Still working on your previous request - I will reply as soon as it finishes, or send /cancel to stop it.")
         return
