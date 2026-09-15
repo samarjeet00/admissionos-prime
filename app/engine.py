@@ -130,7 +130,16 @@ async def _run_turn(user: dict[str, Any], key: str, message: str) -> AsyncIterat
         except anthropic.APIStatusError as exc:
             del history[start_len:]
             log.error("Claude API error %s: %s", exc.status_code, exc.message)
-            yield Event("error", f"Claude API error {exc.status_code}. The administrator has the details in the log.")
+            msg = (exc.message or "").lower()
+            if "credit balance" in msg or "billing" in msg:
+                text = "The Anthropic account behind this bot has run out of credits. The administrator needs to top up at console.anthropic.com -> Plans & Billing; then just resend your message."
+            elif exc.status_code == 401:
+                text = "The bot's Anthropic API key was rejected. The administrator needs to check ANTHROPIC_API_KEY in .env."
+            elif exc.status_code == 529 or exc.status_code >= 500:
+                text = "Claude is temporarily overloaded. Please try again in a minute."
+            else:
+                text = f"Claude API error {exc.status_code}. The administrator has the details in the log."
+            yield Event("error", text)
             return
         except anthropic.APIConnectionError as exc:
             del history[start_len:]
