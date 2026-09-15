@@ -109,7 +109,7 @@ def _search_sync(query: str, max_results: int) -> list[dict[str, str]]:
 async def web_search(query: str, max_results: int = 6) -> tuple[str, bool]:
     max_results = max(1, min(int(max_results or 6), 10))
     try:
-        results = await asyncio.wait_for(asyncio.to_thread(_search_sync, query, max_results), timeout=25)
+        results = await asyncio.wait_for(asyncio.to_thread(_search_sync, query, max_results), timeout=15)
     except asyncio.TimeoutError:
         return ("web_search timed out - try a shorter query", True)
     except Exception as exc:  # noqa: BLE001
@@ -143,8 +143,10 @@ async def fetch_url(url: str, max_chars: int = 12000) -> tuple[str, bool]:
     if parsed.scheme not in ("http", "https") or _blocked_host(parsed.hostname or ""):
         return ("fetch_url: only public http(s) URLs are allowed", True)
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(20.0), headers={"User-Agent": _UA}) as http:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(12.0, connect=6.0), headers={"User-Agent": _UA}) as http:
             r = await http.get(url)
+    except httpx.TimeoutException:
+        return ("fetch_url: the page took too long (12s). Use the search snippets or try a different page.", True)
     except Exception as exc:  # noqa: BLE001
         return (f"fetch_url failed: {type(exc).__name__}: {exc}", True)
     ctype = r.headers.get("content-type", "")

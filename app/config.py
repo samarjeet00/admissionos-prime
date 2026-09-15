@@ -35,6 +35,15 @@ VERTEX_REGION = _env("VERTEX_REGION", "global")
 GEMINI_API_KEY = _env("GEMINI_API_KEY")                 # optional; otherwise the service account is used
 GEMINI_PROJECT_ID = _env("GEMINI_PROJECT_ID") or VERTEX_PROJECT_ID
 GEMINI_MODEL = _env("GEMINI_MODEL", "auto")             # auto = newest flash model available
+GEMINI_RPM_BUDGET = int(_env("GEMINI_RPM_BUDGET", "14"))  # self-imposed requests/minute (free tier shared cap ~20)
+GEMINI_MAX_HOPS = int(_env("GEMINI_MAX_HOPS", "2"))       # model failovers per request on 5xx
+
+# Mistral (free "Experiment" plan at console.mistral.ai) or any OpenAI-compatible endpoint
+MISTRAL_API_KEY = _env("MISTRAL_API_KEY")
+MISTRAL_MODEL = _env("MISTRAL_MODEL", "mistral-medium-latest")
+OPENAI_COMPAT_BASE_URL = _env("OPENAI_COMPAT_BASE_URL")   # e.g. https://api.groq.com/openai/v1
+OPENAI_COMPAT_API_KEY = _env("OPENAI_COMPAT_API_KEY")
+OPENAI_COMPAT_MODEL = _env("OPENAI_COMPAT_MODEL")
 ANTHROPIC_MODEL = _env("ANTHROPIC_MODEL", "claude-opus-5")
 ANTHROPIC_EFFORT = _env("ANTHROPIC_EFFORT", "high")          # low | medium | high | xhigh | max
 ANTHROPIC_MAX_TOKENS = int(_env("ANTHROPIC_MAX_TOKENS", "32000"))
@@ -67,8 +76,10 @@ GOOGLE_SERVICE_ACCOUNT_FILE = _env("GOOGLE_SERVICE_ACCOUNT_FILE", str(DATA_DIR /
 REFERENCE_SHEET_ID = _env("REFERENCE_SHEET_ID", "1mgmv4Cc67olcCN-U7vkNC0q-MVD-23F0_UCAdRODyvk")
 REFERENCE_SHEET_TABS = [t.strip() for t in (_env("REFERENCE_SHEET_TABS",
                         "Board Exam & Result Dates,Entrance Exam & Result Dates,Last Dates Performance") or "").split(",") if t.strip()]
-# When the primary brain's quota is exhausted, retry the same question on this provider (anthropic | vertex | none)
-LLM_FALLBACK_PROVIDER = (_env("LLM_FALLBACK_PROVIDER", "anthropic") or "none").lower()
+# When the primary brain's quota is exhausted, retry the same question on these providers, in order
+# (comma-separated from: mistral, openai_compat, anthropic, vertex). Unconfigured ones are skipped.
+LLM_FALLBACK_PROVIDERS = [p.strip().lower() for p in (_env("LLM_FALLBACK_PROVIDERS") or _env("LLM_FALLBACK_PROVIDER") or "mistral,anthropic").split(",") if p.strip()]
+LLM_FALLBACK_PROVIDER = LLM_FALLBACK_PROVIDERS[0] if LLM_FALLBACK_PROVIDERS else "none"
 REFERENCE_REFRESH_HOURS = float(_env("REFERENCE_REFRESH_HOURS", "6"))
 
 # --- Paths --------------------------------------------------------------------

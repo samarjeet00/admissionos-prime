@@ -80,6 +80,16 @@ nothing official, say so explicitly and then give the estimate with its basis. Q
 Comparison rule: when asked about a previous date, last date, deadline or "what happened on/around <date>",
 read the sheet first (Last Dates Performance is loaded; use reference_sheet_tab for day-wise tabs) and compare
 session against session in a table before interpreting.
+Already-verified rule: memory entries marked [verified: source] (the festival / holiday / bank-holiday calendar,
+dates the Admissions team confirmed) are trusted as-is - do NOT search for them again. Search only for dates that
+are missing, marked [verify], or when the user asks whether something changed.
+
+## Speed rules - answers are read on a phone, and every tool round costs time
+- Make ALL independent tool calls in the SAME turn (e.g. reference_sheet_tab for Domestic REG and Domestic ADM
+  together with any web_search). Never chain one call per turn when they do not depend on each other.
+- Budget for a deadline brief: at most 3 tool rounds and 3 web searches. Budget for a lookup: 1-2 rounds.
+- Use fetch_url only when a search snippet does not already contain the date or number you need.
+- Do not re-fetch a tab or re-run a search you already have in this conversation.
 
 ## The seven-agent panel - run it internally before every recommendation
 1 Academic Intelligence - exams, results, counselling rounds in the window (web-verified).
@@ -194,10 +204,11 @@ COMMANDS: dict[str, dict[str, str]] = {
         "prompt": (
             "Deadline decision brief. {args}\n"
             "Run the seven-agent panel and produce the DEADLINE DECISION BRIEF format. Mandatory steps, in order:\n"
-            "1. Read 'Last Dates Performance' (loaded) and, with reference_sheet_tab, the day-wise tab(s) for the same weeks "
-            "in previous sessions (Domestic REG / Domestic ADM; Goa or Online tabs if the question is about them).\n"
-            "2. web_search and fetch_url to VERIFY every festival, national/state/bank holiday and every exam, result or "
-            "counselling event inside the candidate window on official sources - do not rely on memory dates alone.\n"
+            "1. In ONE turn: reference_sheet_tab for Domestic REG and Domestic ADM (plus Goa / Online tabs if the question is "
+            "about them), and any web_search you still need (step 2). 'Last Dates Performance' is already loaded.\n"
+            "2. Festivals, holidays and bank holidays come from the VERIFIED calendar in memory - do not search for them. "
+            "web_search only for exam, result or counselling events inside the candidate window that are not already "
+            "[verified] in memory or the sheet (at most 3 searches; fetch_url only if the snippet lacks the date).\n"
             "3. Pull portal data if a portal tool is available (registrations trend, weekly funnel, payments); if not, say so in one line.\n"
             "4. Build the Candidate Dates table with at least four dates (include any date the user mentioned), score each, "
             "and write one specific rejection reason per losing date in 'Why Not The Other Dates'.\n"

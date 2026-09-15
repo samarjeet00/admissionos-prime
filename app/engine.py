@@ -44,32 +44,73 @@ def _make_claude_client() -> Any:
     return anthropic.AsyncAnthropic()
 
 
+from . import llm_openai_compat
+
+gemini = None
+claude = None
+compat = None
 if PROVIDER == "gemini":
     from . import llm_gemini
     gemini = llm_gemini.GeminiClient()
-    claude = None
     log.info("Brain: Gemini via Google Developer API (%s)", "API key" if config.GEMINI_API_KEY else "service account")
+elif PROVIDER in ("mistral", "openai_compat"):
+    compat = llm_openai_compat.make_client(PROVIDER)
+    if compat is None:
+        raise RuntimeError(f"LLM_PROVIDER={PROVIDER} but its API key / model is not set in .env")
+    log.info("Brain: %s (%s) via OpenAI-compatible API", PROVIDER, compat.model)
 else:
-    gemini = None
     claude = _make_claude_client()
 USE_FALLBACKS = config.ANTHROPIC_FALLBACKS and PROVIDER == "anthropic"   # server-side fallbacks are Claude API only
 
-# Secondary brain used only when the primary's quota is exhausted (Gemini -> Claude).
-FALLBACK = config.LLM_FALLBACK_PROVIDER if PROVIDER == "gemini" and config.LLM_FALLBACK_PROVIDER in ("anthropic", "vertex") else None
-_fallback_client: Any = None
+# Secondary brains, tried in order when the primary's quota is exhausted or it is overloaded.
+FALLBACKS = [p for p in config.LLM_FALLBACK_PROVIDERS if p != PROVIDER]
+FALLBACK = FALLBACKS[0] if FALLBACKS else None
+_fallback_clients: dict[str, Any] = {}
 
 
-def _fallback_claude() -> Any:
-    global _fallback_client
-    if _fallback_client is None:
+def _fallback_claude(provider: str = "anthropic") -> Any:
+    if provider not in _fallback_clients:
         import os
-        if FALLBACK == "vertex":
+        if provider == "vertex":
             from anthropic import AsyncAnthropicVertex
             os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", config.GOOGLE_SERVICE_ACCOUNT_FILE)
-            _fallback_client = AsyncAnthropicVertex(project_id=config.VERTEX_PROJECT_ID, region=config.VERTEX_REGION)
+            _fallback_clients[provider] = AsyncAnthropicVertex(project_id=config.VERTEX_PROJECT_ID, region=config.VERTEX_REGION)
         else:
-            _fallback_client = anthropic.AsyncAnthropic()
-    return _fallback_client
+            _fallback_clients[provider] = anthropic.AsyncAnthropic()
+    return _fallback_clients[provider]
+
+
+def _fallback_available(provider: str) -> bool:
+    if provider in ("mistral", "openai_compat"):
+        return llm_openai_compat.make_client(provider) is not None
+    if provider == "anthropic":
+        import os
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if provider == "vertex":
+        return bool(config.VERTEX_PROJECT_ID)
+    return False
+
+
+async def _run_fallbacks(user: dict[str, Any], key: str, message: str, transcript: str, reason: str) -> AsyncIterator[Event]:
+    """Try each configured secondary brain for this one question; the first that answers wins."""
+    for provider in FALLBACKS:
+        if not _fallback_available(provider):
+            continue
+        events: list[Event] = []
+        if provider in ("mistral", "openai_compat"):
+            runner = _run_turn_openai(user, key, message, llm_openai_compat.make_client(provider), transcript=transcript)
+        else:
+            runner = _run_turn_claude(user, key, message, transcript=transcript, client=_fallback_claude(provider))
+        async for ev in runner:
+            events.append(ev)
+        if any(ev.kind == "final" for ev in events):
+            yield Event("notice", f"{reason} - this answer came from {provider}.")
+            for ev in events:
+                yield ev
+            return
+        log.warning("fallback %s did not answer: %s", provider, [e.text for e in events if e.kind == "error"][:1])
+    yield Event("error", f"{reason}, and no backup brain could answer (Mistral not configured or Claude has no credits). "
+                         "Please resend in about a minute.")
 
 
 def _gemini_history_as_text(history: list[dict[str, Any]], limit: int = 12000) -> str:
@@ -90,7 +131,11 @@ def _gemini_history_as_text(history: list[dict[str, Any]], limit: int = 12000) -
 
 
 def model_name() -> str:
-    return (gemini.model or "gemini") if gemini else config.ANTHROPIC_MODEL
+    if gemini:
+        return gemini.model or "gemini"
+    if compat:
+        return compat.model
+    return config.ANTHROPIC_MODEL
 
 
 @dataclass
@@ -169,8 +214,13 @@ async def handle(user: dict[str, Any], key: str, text: str) -> AsyncIterator[Eve
         yield Event("error", "Still working on your previous request - I will reply as soon as it finishes.")
         return
     async with lock:
-        runner = _run_turn_gemini if PROVIDER == "gemini" else _run_turn_claude
-        async for event in runner(user, key, stripped):
+        if PROVIDER == "gemini":
+            runner = _run_turn_gemini(user, key, stripped)
+        elif compat is not None:
+            runner = _run_turn_openai(user, key, stripped, compat)
+        else:
+            runner = _run_turn_claude(user, key, stripped)
+        async for event in runner:
             yield event
 
 
@@ -272,6 +322,83 @@ async def _run_turn_claude(user: dict[str, Any], key: str, message: str,
     yield Event("final", f"Stopped after {config.MAX_TOOL_ROUNDS} tool rounds without a conclusion - narrow the question.")
 
 
+# --- OpenAI-compatible (Mistral etc.) -------------------------------------------------------
+def _openai_history_as_text(history: list[dict[str, Any]], limit: int = 12000) -> str:
+    lines = []
+    for m in history:
+        role = m.get("role")
+        if role == "user":
+            lines.append(f"User: {m.get('content', '')}")
+        elif role == "assistant":
+            if m.get("content"):
+                lines.append(f"AdmissionOS: {m['content']}")
+            for tc in m.get("tool_calls") or []:
+                lines.append(f"AdmissionOS called tool {(tc.get('function') or {}).get('name')}")
+        elif role == "tool":
+            lines.append(f"Tool returned: {str(m.get('content', ''))[:1500]}")
+    return "\n".join(lines)[-limit:]
+
+
+async def _run_turn_openai(user: dict[str, Any], key: str, message: str, client: Any,
+                           transcript: str | None = None) -> AsyncIterator[Event]:
+    fallback_mode = transcript is not None
+    history = [] if fallback_mode else conversations[key]
+    prompt, command = brain.expand_command(message)
+    if command and not fallback_mode:
+        yield Event("command", name=command, text=brain.COMMANDS[command]["title"])
+    if fallback_mode and transcript:
+        prompt = f"Earlier conversation (for context):\n{transcript}\n\n---\nCurrent request:\n{prompt}"
+    start_len = len(history)
+    history.append({"role": "user", "content": _envelope(prompt, user)})
+    _trim(history)
+    start_len = min(start_len, len(history) - 1)
+
+    tools, allowed = _tools_for(user)
+    system = "\n\n".join(block["text"] for block in brain.build_system_prompt())
+    messages_prefix = [{"role": "system", "content": system}]
+
+    for _round in range(config.MAX_TOOL_ROUNDS):
+        try:
+            response = await client.chat(messages_prefix + history, tools, config.ANTHROPIC_MAX_TOKENS)
+            echo, calls, text, finish = llm_openai_compat.extract(response)
+        except llm_openai_compat.CompatError as exc:
+            del history[start_len:]
+            log.error("%s error %s: %s", client.name, exc.status, exc.message)
+            if exc.status in (429, 503, 500, 502, 504) and not fallback_mode and FALLBACKS:
+                reason = f"{client.name} is rate-limited" if exc.status == 429 else f"{client.name} is overloaded"
+                async for ev in _run_fallbacks(user, key, message, _openai_history_as_text(history), reason):
+                    yield ev
+                return
+            if exc.status == 401:
+                text = f"The {client.name} API key was rejected. The administrator needs to check it in .env."
+            elif exc.status == 429:
+                text = f"{client.name} is rate-limited right now - wait a minute and resend."
+            else:
+                text = f"{client.name} API error {exc.status}. The administrator has the details in the log."
+            yield Event("error", text)
+            return
+        except Exception as exc:  # noqa: BLE001
+            del history[start_len:]
+            log.exception("%s request failed", client.name)
+            yield Event("error", f"Could not reach {client.name}: {type(exc).__name__}: {exc}")
+            return
+
+        history.append(echo)
+        if calls:
+            for c in calls:
+                yield Event("tool_start", name=c["name"])
+            results = await asyncio.gather(*(_execute_tool(c["name"], c["args"], allowed, user) for c in calls))
+            for c, r in zip(calls, results):
+                yield Event("tool_result", name=r["name"], ok=not r["is_error"], seconds=r["seconds"])
+                history.append({"role": "tool", "tool_call_id": c["id"], "name": c["name"], "content": r["text"]})
+            continue
+        if finish == "length":
+            yield Event("notice", "The answer hit the length limit - send 'continue' for the rest.")
+        yield Event("final", text.strip() or "(no answer produced)")
+        return
+    yield Event("final", f"Stopped after {config.MAX_TOOL_ROUNDS} tool rounds without a conclusion - narrow the question.")
+
+
 # --- Gemini ------------------------------------------------------------------------------
 async def _run_turn_gemini(user: dict[str, Any], key: str, message: str) -> AsyncIterator[Event]:
     from . import llm_gemini
@@ -286,7 +413,8 @@ async def _run_turn_gemini(user: dict[str, Any], key: str, message: str) -> Asyn
 
     tools, allowed = _tools_for(user)
     system = "\n\n".join(block["text"] for block in brain.build_system_prompt())
-    thinking = "high" if command else "low"          # standing deliverables get deep reasoning; lookups stay fast
+    # Deep reasoning only where it pays: daily report and forecast; briefs medium; lookups fast.
+    thinking = "high" if command in ("daily", "forecast") else ("medium" if command else "low")
 
     for _round in range(config.MAX_TOOL_ROUNDS):
         try:
@@ -295,11 +423,10 @@ async def _run_turn_gemini(user: dict[str, Any], key: str, message: str) -> Asyn
         except llm_gemini.GeminiError as exc:
             del history[start_len:]
             log.error("Gemini error %s: %s", exc.status, exc.message)
-            if exc.status in (429, 503, 500, 502, 504) and FALLBACK:
-                # Quota exhausted or Google overloaded: answer this question on the secondary brain instead.
-                yield Event("notice", f"Gemini unavailable ({exc.status}) - answering with Claude instead.")
-                transcript = _gemini_history_as_text(history)
-                async for ev in _run_turn_claude(user, key, message, transcript=transcript, client=_fallback_claude()):
+            if exc.status in (429, 503, 500, 502, 504) and FALLBACKS:
+                # Quota exhausted or Google overloaded: answer this question on a secondary brain instead.
+                reason = "Gemini's free quota is exhausted for the moment" if exc.status == 429 else "Gemini is overloaded"
+                async for ev in _run_fallbacks(user, key, message, _gemini_history_as_text(history), reason):
                     yield ev
                 return
             if exc.status == 429:

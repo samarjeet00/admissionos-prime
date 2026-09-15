@@ -24,7 +24,9 @@ API = "https://generativelanguage.googleapis.com/v1beta"
 SCOPES = ["https://www.googleapis.com/auth/generative-language"]
 _ALLOWED_FORMATS = {"string": {"enum", "date-time"}, "number": {"float", "double"}, "integer": {"int32", "int64"}}
 _RETRY_STATUS = {429, 500, 502, 503, 504}
-PROBE_INTERVAL = 600  # seconds between background health probes
+PROBE_INTERVAL = 3600      # background health probe at most hourly, and only when the bot has been idle
+IDLE_BEFORE_PROBE = 1800   # skip the probe if a real request succeeded in the last 30 minutes
+_RETRY_IN = re.compile(r"retry in (\d+(?:\.\d+)?)s", re.I)
 
 
 class GeminiError(Exception):
@@ -140,8 +142,11 @@ class GeminiClient:
         self.model: str | None = pinned
         self.candidates: list[str] = [pinned] if pinned else []
         self.unavailable: set[str] = set()
-        self.cooldown: dict[str, float] = {}       # model -> time until which we avoid it (recent 503/429)
+        self.cooldown: dict[str, float] = {}       # model -> time until which we avoid it (recent 503)
         self.last_probe = 0.0
+        self.last_success = 0.0
+        self._sent: list[float] = []               # timestamps of requests in the last minute (self-imposed budget)
+        self._budget_lock = asyncio.Lock()
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0))
 
     # --- auth -----------------------------------------------------------------
@@ -164,7 +169,22 @@ class GeminiClient:
         return headers, {}
 
     # --- HTTP ---------------------------------------------------------------------
+    async def _take_budget(self) -> None:
+        """Never exceed GEMINI_RPM_BUDGET requests per rolling minute - the free tier's shared cap is ~20."""
+        async with self._budget_lock:
+            while True:
+                now = time.monotonic()
+                self._sent = [t for t in self._sent if now - t < 60]
+                if len(self._sent) < config.GEMINI_RPM_BUDGET:
+                    self._sent.append(now)
+                    return
+                wait = 60 - (now - self._sent[0]) + 0.5
+                log.info("Gemini budget: %d requests in the last minute - waiting %.0fs", len(self._sent), wait)
+                await asyncio.sleep(wait)
+
     async def _request(self, method: str, path: str, max_attempts: int = 3, **kw: Any) -> dict[str, Any]:
+        if ":generateContent" in path:
+            await self._take_budget()
         headers, params = await self._auth()
         headers.update(kw.pop("headers", {}))
         params.update(kw.pop("params", {}))
@@ -223,7 +243,7 @@ class GeminiClient:
         filler = ("Admissions context paragraph for load testing. " * 40 + "\n") * 12   # ~4k tokens, like a real turn
         body = {"contents": [{"role": "user", "parts": [{"text": filler + "\nReply with OK"}]}],
                 "generationConfig": {"maxOutputTokens": 5, "thinkingConfig": {"thinkingBudget": 0}}}
-        for m in self._order():
+        for m in self._order()[:3]:                  # at most three probe requests - they count against the quota
             t0 = time.monotonic()
             try:
                 await self._request("POST", f"models/{m}:generateContent", max_attempts=1, json=body)
@@ -243,10 +263,17 @@ class GeminiClient:
     async def probe_forever(self) -> None:
         while True:
             await asyncio.sleep(PROBE_INTERVAL)
+            if time.monotonic() - self.last_success < IDLE_BEFORE_PROBE:
+                continue                                  # recently working - do not spend quota on a probe
             try:
                 await self.probe()
             except Exception:  # noqa: BLE001
                 log.exception("Gemini probe failed")
+
+    @staticmethod
+    def _retry_seconds(exc: "GeminiError") -> float | None:
+        m = _RETRY_IN.search(exc.message or "")
+        return float(m.group(1)) if m else None
 
     async def ensure_model(self) -> str:
         if self.model and self.candidates:
@@ -268,13 +295,18 @@ class GeminiClient:
             body["tools"] = [{"functionDeclarations": to_function_declarations(tools)}]
 
         last: GeminiError | None = None
+        quota_waits = 0
+        hops = 0
         for sweep in range(2):                       # two passes over the list; short pause between them
             for m in self._order():
+                if hops >= config.GEMINI_MAX_HOPS:   # every hop is a request against the shared quota
+                    break
                 try:
                     result = await self._request("POST", f"models/{m}:generateContent", max_attempts=1, json=body)
                     if m != self.model:
                         log.warning("Gemini failover: %s -> %s", self.model, m)
                         self.model = m
+                    self.last_success = time.monotonic()
                     return result
                 except GeminiError as exc:
                     if exc.status == 404:
@@ -285,9 +317,33 @@ class GeminiClient:
                         return await self.generate(system, contents, tools, thinking=None)
                     if exc.status not in _RETRY_STATUS:
                         raise
-                    self._mark_busy(m)                 # skip this model for the next few minutes
-                    log.warning("Gemini %s on %s - trying next", exc.status, m)
                     last = exc
+                    if exc.status == 429:
+                        # Free-tier per-minute quota is shared across models: hopping does not help, waiting does.
+                        wait = self._retry_seconds(exc)
+                        if wait is not None and wait <= 65 and quota_waits < 2:
+                            quota_waits += 1
+                            log.warning("Gemini quota: waiting %.0fs as requested (wait %d/2)", wait + 1, quota_waits)
+                            await asyncio.sleep(wait + 1)
+                            result = await self._retry_same(m, body)
+                            if result is not None:
+                                return result
+                            continue
+                        raise
+                    self._mark_busy(m)                 # 5xx: skip this model for the next few minutes
+                    hops += 1
+                    log.warning("Gemini %s on %s - trying next", exc.status, m)
             if sweep == 0:
                 await asyncio.sleep(8)
         raise last or GeminiError(503, "all Gemini models busy")
+
+    async def _retry_same(self, model: str, body: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            result = await self._request("POST", f"models/{model}:generateContent", max_attempts=1, json=body)
+            self.model = model
+            self.last_success = time.monotonic()
+            return result
+        except GeminiError as exc:
+            if exc.status in _RETRY_STATUS:
+                return None
+            raise
