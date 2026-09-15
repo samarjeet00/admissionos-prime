@@ -5,7 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", override=True)   # .env is the source of truth, even over shell variables
 
 
 _PLACEHOLDERS = ("<", "change-me", "sk-ant-...", "...")
