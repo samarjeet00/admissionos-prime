@@ -112,8 +112,10 @@ def rank_models(names: list[str]) -> list[str]:
         return float(m.group(1)) if m else 0.0
     bare = sorted((n for n in names if re.fullmatch(r"models/gemini-\d+(?:\.\d+)?-flash", n)), key=version, reverse=True)
     latest = [n for n in names if n == "models/gemini-flash-latest"]
+    lite = sorted((n for n in names if re.fullmatch(r"models/gemini-\d+(?:\.\d+)?-flash-lite", n)), key=version, reverse=True)
+    lite_latest = [n for n in names if n == "models/gemini-flash-lite-latest"]
     pro = sorted((n for n in names if re.fullmatch(r"models/gemini-\d+(?:\.\d+)?-pro", n)), key=version, reverse=True)
-    return [n.replace("models/", "") for n in bare + latest + pro]
+    return [n.replace("models/", "") for n in bare + latest + lite[:2] + lite_latest + pro]
 
 
 def pick_model(names: list[str]) -> str | None:
@@ -231,7 +233,7 @@ class GeminiClient:
         if self.model and self.model in cands:
             cands.remove(self.model)
             cands.insert(0, self.model)
-        return cands[:6]
+        return cands[:8]
 
     def _mark_busy(self, model: str, seconds: float = 300.0) -> None:
         self.cooldown[model] = time.monotonic() + seconds

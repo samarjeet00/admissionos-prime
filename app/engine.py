@@ -175,11 +175,19 @@ def _tools_for(user: dict[str, Any]) -> tuple[list[dict[str, Any]], set[str]]:
     return tools, {t["name"] for t in tools}
 
 
-async def _execute_tool(name: str, args: dict[str, Any], allowed: set[str], user: dict[str, Any]) -> dict[str, Any]:
+_turn_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))   # key -> tool -> calls this turn
+_BUDGETS = {"web_search": lambda: config.WEB_SEARCH_BUDGET, "fetch_url": lambda: config.FETCH_BUDGET}
+
+
+async def _execute_tool(name: str, args: dict[str, Any], allowed: set[str], user: dict[str, Any], key: str = "") -> dict[str, Any]:
     t0 = time.monotonic()
     if name not in allowed:
         text, is_error = (f"Access denied: `{name}` is not available to the {user['tier']} tier.", True)
+    elif name in _BUDGETS and _turn_counts[key][name] >= _BUDGETS[name]():
+        text, is_error = (f"{name} budget for this answer is used up ({_BUDGETS[name]()}). Answer now with the evidence you already have "
+                          "and mark anything unconfirmed as [estimate].", True)
     else:
+        _turn_counts[key][name] += 1
         local = await webtools.call_local(name, dict(args or {}))
         text, is_error = local if local is not None else await bridge.call(name, dict(args or {}))
     return {"name": name, "text": text, "is_error": is_error, "seconds": round(time.monotonic() - t0, 1)}
@@ -213,6 +221,7 @@ async def handle(user: dict[str, Any], key: str, text: str) -> AsyncIterator[Eve
     if lock.locked():
         yield Event("error", "Still working on your previous request - I will reply as soon as it finishes.")
         return
+    _turn_counts.pop(key, None)          # fresh tool budgets for this answer
     async with lock:
         if PROVIDER == "gemini":
             runner = _run_turn_gemini(user, key, stripped)
@@ -296,7 +305,7 @@ async def _run_turn_claude(user: dict[str, Any], key: str, message: str,
             calls = [b for b in final.content if b.type == "tool_use"]
             for b in calls:
                 yield Event("tool_start", name=b.name)
-            results = await asyncio.gather(*(_execute_tool(b.name, b.input or {}, allowed, user) for b in calls))
+            results = await asyncio.gather(*(_execute_tool(b.name, b.input or {}, allowed, user, key) for b in calls))
             for b, r in zip(calls, results):
                 r["id"] = b.id
                 yield Event("tool_result", name=r["name"], ok=not r["is_error"], seconds=r["seconds"])
@@ -387,7 +396,7 @@ async def _run_turn_openai(user: dict[str, Any], key: str, message: str, client:
         if calls:
             for c in calls:
                 yield Event("tool_start", name=c["name"])
-            results = await asyncio.gather(*(_execute_tool(c["name"], c["args"], allowed, user) for c in calls))
+            results = await asyncio.gather(*(_execute_tool(c["name"], c["args"], allowed, user, key) for c in calls))
             for c, r in zip(calls, results):
                 yield Event("tool_result", name=r["name"], ok=not r["is_error"], seconds=r["seconds"])
                 history.append({"role": "tool", "tool_call_id": c["id"], "name": c["name"], "content": r["text"]})
@@ -452,7 +461,7 @@ async def _run_turn_gemini(user: dict[str, Any], key: str, message: str) -> Asyn
         if calls:
             for c in calls:
                 yield Event("tool_start", name=c.get("name", "?"))
-            results = await asyncio.gather(*(_execute_tool(c.get("name", ""), c.get("args") or {}, allowed, user) for c in calls))
+            results = await asyncio.gather(*(_execute_tool(c.get("name", ""), c.get("args") or {}, allowed, user, key) for c in calls))
             responses = []
             for c, r in zip(calls, results):
                 yield Event("tool_result", name=r["name"], ok=not r["is_error"], seconds=r["seconds"])
