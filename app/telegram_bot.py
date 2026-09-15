@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx2 as httpx
 
-from . import auth, brain, config, engine, formatting
+from . import access, auth, brain, config, engine, formatting
 
 log = logging.getLogger("admissionos.telegram")
 
@@ -29,14 +29,24 @@ class TelegramBot:
             raise RuntimeError(f"Telegram {method} failed: {data.get('description', response.text)}")
         return data["result"]
 
-    async def send(self, chat_id: int, text: str, parse_mode: str | None = "HTML") -> dict[str, Any]:
+    async def send(self, chat_id: int, text: str, parse_mode: str | None = "HTML",
+                   keyboard: list[list[dict[str, str]]] | None = None) -> dict[str, Any]:
+        extra: dict[str, Any] = {}
+        if keyboard:
+            extra["reply_markup"] = {"inline_keyboard": keyboard}
         try:
             return await self.call("sendMessage", chat_id=chat_id, text=text, parse_mode=parse_mode,
-                                   disable_web_page_preview=True)
+                                   disable_web_page_preview=True, **extra)
         except RuntimeError as exc:
             if parse_mode and "parse" in str(exc).lower():   # malformed HTML from an odd model output - fall back to plain
-                return await self.call("sendMessage", chat_id=chat_id, text=text, disable_web_page_preview=True)
+                return await self.call("sendMessage", chat_id=chat_id, text=text, disable_web_page_preview=True, **extra)
             raise
+
+    async def _notify_admin(self, chat_id: int, text: str, keyboard: list[list[dict[str, str]]]) -> None:
+        await self.send(chat_id, text, keyboard=keyboard)
+
+    async def _reply_external(self, external_id: str, text: str) -> None:
+        await self.send(int(external_id), text, parse_mode=None)
 
     # --- main loop -----------------------------------------------------------
     async def run(self) -> None:
@@ -48,11 +58,13 @@ class TelegramBot:
                      {"command": "reload", "description": "Re-read the exam-dates reference sheet"},
                      {"command": "help", "description": "List commands"}]
         await self.call("setMyCommands", commands=commands)
-        log.info("Telegram bot @%s polling", self.username)
+        access.register_notifier(self._notify_admin)
+        access.register_replier("telegram", self._reply_external)
+        log.info("Telegram bot @%s polling (admins: %s)", self.username, ", ".join(a["handle"] for a in access.admins()) or "none")
         offset: int | None = None
         while True:
             try:
-                updates = await self.call("getUpdates", offset=offset, timeout=50, allowed_updates=["message"])
+                updates = await self.call("getUpdates", offset=offset, timeout=50, allowed_updates=["message", "callback_query"])
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -70,6 +82,9 @@ class TelegramBot:
             log.exception("update %s failed", update.get("update_id"))
 
     async def handle(self, update: dict[str, Any]) -> None:
+        if "callback_query" in update:
+            await self._handle_callback(update["callback_query"])
+            return
         msg = update.get("message") or {}
         text = msg.get("text")
         chat = msg.get("chat") or {}
@@ -79,9 +94,19 @@ class TelegramBot:
         chat_id, tg_id = chat["id"], sender.get("id")
         user = auth.resolve("telegram", tg_id)
         if not user:
-            await self.send(chat_id, "<b>ACCESS DENIED</b>\n\nThis is a private system.\n"
-                                     f"Your Telegram ID is <code>{tg_id}</code> - ask the AdmissionOS administrator to enrol it.")
-            log.warning("denied telegram id %s (%s)", tg_id, sender.get("username"))
+            display = " ".join(p for p in (sender.get("first_name"), sender.get("last_name")) if p) or "Unknown"
+            if sender.get("username"):
+                display += f" (@{sender['username']})"
+            status = await access.request("telegram", tg_id, display, text)
+            if status == "new":
+                reply = ("🔐 This is a private system. Your access request has been sent to the AdmissionOS administrator - "
+                         "you will get a message here as soon as it is approved.")
+            elif status == "pending":
+                reply = "⏳ Your access request is still waiting for the administrator. You will be notified here."
+            else:
+                reply = f"ACCESS DENIED. This is a private system and no administrator is reachable. Your Telegram ID is {tg_id}."
+            await self.send(chat_id, reply, parse_mode=None)
+            log.warning("access request from telegram id %s (%s): %s", tg_id, sender.get("username"), status)
             return
         if self.username and text.startswith("/"):
             text = text.replace(f"@{self.username}", "", 1)   # "/daily@BotName focus" -> "/daily focus"
@@ -164,6 +189,34 @@ class TelegramBot:
         final_text = f"{final_text}\n\n{footer}_"
         for chunk in formatting.render(final_text, "telegram"):
             await self.send(chat_id, chunk)
+
+    async def _handle_callback(self, cq: dict[str, Any]) -> None:
+        """An administrator pressed Viewer / Operational / Executive / Deny on an access request."""
+        cq_id = cq.get("id")
+        data = cq.get("data") or ""
+        presser = cq.get("from") or {}
+        msg = cq.get("message") or {}
+        try:
+            if not data.startswith("acc|"):
+                await self.call("answerCallbackQuery", callback_query_id=cq_id)
+                return
+            if not access.is_admin(presser.get("id")):
+                await self.call("answerCallbackQuery", callback_query_id=cq_id, text="Only an administrator can decide this.", show_alert=True)
+                return
+            _, key, decision = data.split("|", 2)
+            by = " ".join(p for p in (presser.get("first_name"), presser.get("last_name")) if p) or "administrator"
+            outcome = await access.decide(key, decision, by)
+            await self.call("answerCallbackQuery", callback_query_id=cq_id, text=outcome[:180])
+            if msg.get("message_id"):
+                original = msg.get("text") or ""
+                await self.call("editMessageText", chat_id=msg["chat"]["id"], message_id=msg["message_id"],
+                                text=f"{original}\n\n{outcome}")
+        except Exception:  # noqa: BLE001
+            log.exception("callback handling failed")
+            try:
+                await self.call("answerCallbackQuery", callback_query_id=cq_id, text="Something went wrong - see the log.")
+            except RuntimeError:
+                pass
 
     async def _keep_typing(self, chat_id: int) -> None:
         try:

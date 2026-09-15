@@ -5,3 +5,4 @@ __pycache__/
 *.log
 tools/
 data/google-service-account.json
+data/access_requests.json

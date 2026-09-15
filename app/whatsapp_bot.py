@@ -17,7 +17,7 @@ import httpx2 as httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
-from . import auth, config, engine, formatting
+from . import access, auth, config, engine, formatting
 
 log = logging.getLogger("admissionos.whatsapp")
 
@@ -93,9 +93,17 @@ async def _safe_process(sender: str, message_id: str, text: str) -> None:
 async def process(sender: str, message_id: str, text: str) -> None:
     user = auth.resolve("whatsapp", sender)
     if not user:
-        await send_text(sender, f"ACCESS DENIED\n\nThis is a private system. Your number (+{sender}) is not enrolled - "
-                                "ask the AdmissionOS administrator.")
-        log.warning("denied whatsapp number %s", sender)
+        access.register_replier("whatsapp", send_text)
+        status = await access.request("whatsapp", sender, f"+{sender}", text)
+        if status == "new":
+            reply = ("🔐 This is a private system. Your access request has been sent to the AdmissionOS administrator - "
+                     "you will get a message here as soon as it is approved.")
+        elif status == "pending":
+            reply = "⏳ Your access request is still waiting for the administrator. You will be notified here."
+        else:
+            reply = f"ACCESS DENIED. This is a private system and no administrator is reachable (+{sender})."
+        await send_text(sender, reply)
+        log.warning("access request from whatsapp number %s: %s", sender, status)
         return
     await mark_read(message_id, typing=True)
     quick = text.strip().lower() in ("/start", "/help", "help", "/reset", "/new", "hi", "hello")

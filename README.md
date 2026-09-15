@@ -41,19 +41,27 @@ run.bat
 
 Leave that window open (Ctrl+C stops it). Linux / macOS: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cp .env.example .env && .venv/bin/python -m app.main`.
 
-## 2. Enrol users (this is the authentication layer)
+## 2. Access control - who can use the bot
 
-Nobody gets an answer until an administrator enrols their Telegram ID or WhatsApp number with a tier.
-Unknown senders receive `ACCESS DENIED` — on Telegram the denial shows their ID so you can enrol it.
-Open a **second** CMD window in the project folder:
+Nobody gets an answer until they are enrolled. Two ways in:
+
+**Ask-and-approve (default).** An unknown person messages the bot and gets "your access request has been sent to the
+administrator". Every administrator (`"admin": true` in `data/users.json`) receives a Telegram message with buttons
+**Viewer / Operational / Executive / Deny**. One tap enrols the person at that level and notifies them; Deny notifies
+them too. WhatsApp requests arrive the same way, in the administrator's Telegram. Pending requests are kept in
+`data/access_requests.json`; repeat messages remind at most once an hour.
+
+**Manual enrolment.** From a second CMD window in the project folder:
 
 ```bat
-users.bat add samar --name "Samar" --tier executive --telegram 123456789
+users.bat add samar --name "Samar" --tier executive --telegram 123456789 --admin
+users.bat set ravi --tier operational
 users.bat list
-users.bat disable samar
+users.bat disable ravi
 ```
 
-Changes apply on the person's next message — no restart.
+`--admin` marks who receives the approval pop-ups (if nobody is flagged, all executives do). Changes apply on the
+person's next message - no restart.
 
 Why no password: on WhatsApp the phone number is SIM-bound and on Telegram the account is protected by the
 platform; a password typed into the chat would just sit in the message history.
@@ -96,7 +104,7 @@ Type them in the chat (Telegram shows them in the `/` menu). Anything after a co
 | `/events` | Exams, results, festivals, holidays in the next 60 days with impact ratings |
 | `/competitors` | Competitor windows, scholarships, likely moves, our counter-moves |
 | `/program <name>` | Full deep-dive for one programme |
-| `/reset`, `/reload`, `/help` | Fresh conversation / re-read the reference sheet / list commands |
+| `/cancel`, `/reset`, `/reload`, `/help` | Stop the running request / fresh conversation / re-read the reference sheet / list commands |
 
 Plain-English questions work too ("why did B.Pharm applications drop this week?"). Command prompts are in
 `app/brain.py::COMMANDS`.
@@ -170,3 +178,10 @@ OpenAI-compatible endpoint - NVIDIA build.nvidia.com free key with `nvidia/nemot
 primary is rate-limited or overloaded; unconfigured ones are skipped. Measured: Gemini lookups 20-45 s, briefs
 60-90 s when healthy; NVIDIA backup ~5 min per brief. Free-tier note: Google may use unpaid-tier prompts to improve its products - keep
 identifiable student data out of the bot on that tier.
+
+## 9. Moving the bot to another machine (GitHub is the source of truth)
+
+Everything except secrets is in the repository. Three files are deliberately git-ignored and must be copied by hand:
+`.env` (API keys and tokens), `data/users.json` (who is enrolled), `data/google-service-account.json` (sheet access).
+Clone, run `setup.bat`, drop those three files into place, run `run.bat`. Deleting the folder on the old machine
+stops the bot there - only one copy should run at a time (two copies fight over Telegram updates).

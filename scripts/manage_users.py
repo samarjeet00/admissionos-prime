@@ -28,6 +28,8 @@ def main() -> None:
         p.add_argument("--tier", choices=auth.TIERS, required=(name == "add"))
         p.add_argument("--telegram", help="Telegram user ID (numeric)")
         p.add_argument("--whatsapp", help="WhatsApp number, e.g. 919876543210")
+        p.add_argument("--admin", action="store_true", help="This person approves access requests (gets the pop-up)")
+        p.add_argument("--no-admin", action="store_true", help="Remove the admin flag")
     sub.add_parser("list")
     for name in ("disable", "enable", "remove"):
         sub.add_parser(name).add_argument("handle")
@@ -42,7 +44,8 @@ def main() -> None:
             print("(no users yet)")
         for u in users:
             flag = "active" if u.get("active", True) else "DISABLED"
-            print(f"{u['handle']:14} {u['tier']:12} {flag:9} tg={u.get('telegram_id') or '-':12} wa={u.get('whatsapp') or '-':15} {u.get('name', '')}")
+            adm = "ADMIN" if u.get("admin") else ""
+            print(f"{u['handle']:14} {u['tier']:12} {flag:9} {adm:6} tg={u.get('telegram_id') or '-':12} wa={u.get('whatsapp') or '-':15} {u.get('name', '')}")
         return
 
     if args.cmd == "add":
@@ -65,6 +68,10 @@ def main() -> None:
             existing["telegram_id"] = auth.normalize("telegram", args.telegram)
         if args.whatsapp:
             existing["whatsapp"] = auth.normalize("whatsapp", args.whatsapp)
+        if args.admin:
+            existing["admin"] = True
+        if args.no_admin:
+            existing.pop("admin", None)
         for channel, field in auth.CHANNEL_FIELD.items():     # one identity may belong to one person only
             value = existing.get(field)
             clash = next((u for u in users if u is not existing and u.get(field) == value), None) if value else None
