@@ -43,7 +43,8 @@ class TelegramBot:
         me = await self.call("getMe")
         self.username = me.get("username", "")
         commands = [{"command": name, "description": spec["title"][:256]} for name, spec in brain.COMMANDS.items()]
-        commands += [{"command": "reset", "description": "Start a fresh conversation"},
+        commands += [{"command": "cancel", "description": "Stop the request that is running"},
+                     {"command": "reset", "description": "Start a fresh conversation"},
                      {"command": "reload", "description": "Re-read the exam-dates reference sheet"},
                      {"command": "help", "description": "List commands"}]
         await self.call("setMyCommands", commands=commands)
@@ -84,6 +85,14 @@ class TelegramBot:
             return
         if self.username and text.startswith("/"):
             text = text.replace(f"@{self.username}", "", 1)   # "/daily@BotName focus" -> "/daily focus"
+        if text.strip().lower() in ("/cancel", "cancel", "stop"):
+            # Cancel must bypass the busy check: run the engine's cancel path directly and reply.
+            reply = ""
+            async for ev in engine.handle(user, f"telegram:{tg_id}", "/cancel"):
+                if ev.kind == "final":
+                    reply = ev.text
+            await self.send(chat_id, reply or "OK.", parse_mode=None)
+            return
 
         typing = asyncio.create_task(self._keep_typing(chat_id))
         status = await self.send(chat_id, "🔎 Working on it…")
@@ -112,6 +121,9 @@ class TelegramBot:
                 if ev.kind == "command":
                     progress.append(f"▶ {ev.text}")
                     await refresh(force=True)
+                elif ev.kind == "status":
+                    progress.append(f"⚠️ {ev.text}")
+                    await refresh(force=True)
                 elif ev.kind == "tool_start":
                     progress.append(f"… {ev.name}")
                     running[ev.name] = len(progress) - 1
@@ -130,6 +142,13 @@ class TelegramBot:
                     notices.append(ev.text)
                 elif ev.kind == "final":
                     final_text = ev.text
+        except asyncio.CancelledError:
+            typing.cancel()
+            try:
+                await self.call("editMessageText", chat_id=chat_id, message_id=status_id, text="⛔ Cancelled.")
+            except RuntimeError:
+                pass
+            return
         finally:
             typing.cancel()
 

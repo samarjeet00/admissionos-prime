@@ -149,7 +149,8 @@ class GeminiClient:
         self.last_success = 0.0
         self._sent: list[float] = []               # timestamps of requests in the last minute (self-imposed budget)
         self._budget_lock = asyncio.Lock()
-        self.http = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0))
+        # A hung Google call must not block a user for minutes: 90s read cap, then treat it as overloaded and hop.
+        self.http = httpx.AsyncClient(timeout=httpx.Timeout(20.0, read=config.GEMINI_READ_TIMEOUT))
 
     # --- auth -----------------------------------------------------------------
     def _bearer(self) -> str:
@@ -192,7 +193,13 @@ class GeminiClient:
         params.update(kw.pop("params", {}))
         delay = 4.0
         for attempt in range(max_attempts):
-            r = await self.http.request(method, f"{API}/{path}", headers=headers, params=params, **kw)
+            try:
+                r = await self.http.request(method, f"{API}/{path}", headers=headers, params=params, **kw)
+            except httpx.TimeoutException:
+                log.warning("Gemini call timed out after %.0fs (%s)", config.GEMINI_READ_TIMEOUT, path.split(":")[0])
+                raise GeminiError(503, "no response from Google within the time limit")
+            except httpx.HTTPError as exc:
+                raise GeminiError(503, f"connection problem: {type(exc).__name__}")
             if r.status_code in _RETRY_STATUS and attempt < max_attempts - 1:
                 wait = delay
                 try:

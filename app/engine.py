@@ -29,6 +29,7 @@ MAX_HISTORY_MESSAGES = 60
 PROVIDER = config.LLM_PROVIDER
 conversations: dict[str, list[dict[str, Any]]] = defaultdict(list)
 locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+active_tasks: dict[str, asyncio.Task | None] = {}     # key -> the task currently answering (for /cancel)
 
 
 def _make_claude_client() -> Any:
@@ -96,6 +97,8 @@ async def _run_fallbacks(user: dict[str, Any], key: str, message: str, transcrip
     for provider in FALLBACKS:
         if not _fallback_available(provider):
             continue
+        label = {"openai_compat": "NVIDIA backup (slower, 3-5 min)", "mistral": "Mistral backup", "anthropic": "Claude backup", "vertex": "Claude backup"}.get(provider, provider)
+        yield Event("status", text=f"{reason} - switching to {label}")
         events: list[Event] = []
         if provider in ("mistral", "openai_compat"):
             runner = _run_turn_openai(user, key, message, llm_openai_compat.make_client(provider), transcript=transcript)
@@ -140,7 +143,7 @@ def model_name() -> str:
 
 @dataclass
 class Event:
-    kind: str                 # command | tool_start | tool_result | notice | error | final
+    kind: str                 # command | status | tool_start | tool_result | notice | error | final
     text: str = ""
     name: str = ""
     ok: bool = True
@@ -218,9 +221,18 @@ async def handle(user: dict[str, Any], key: str, text: str) -> AsyncIterator[Eve
         yield Event("final", f"Unknown command `{stripped.split(' ', 1)[0]}`.\n\n" + help_text(user))
         return
     lock = locks[key]
-    if lock.locked():
-        yield Event("error", "Still working on your previous request - I will reply as soon as it finishes.")
+    if lowered in ("/cancel", "cancel", "stop"):
+        task = active_tasks.get(key)
+        if task and not task.done():
+            task.cancel()
+            yield Event("final", "Cancelled the previous request. Ask again whenever you are ready.")
+        else:
+            yield Event("final", "Nothing is running right now.")
         return
+    if lock.locked():
+        yield Event("error", "Still working on your previous request - I will reply as soon as it finishes, or send /cancel to stop it.")
+        return
+    active_tasks[key] = asyncio.current_task()
     _turn_counts.pop(key, None)          # fresh tool budgets for this answer
     async with lock:
         if PROVIDER == "gemini":
