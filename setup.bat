@@ -27,9 +27,9 @@ if not exist ".env" (
   copy ".env.example" ".env" >nul
   echo.
   echo Created .env - Notepad will open it now. Fill in:
-  echo    ANTHROPIC_API_KEY   - from https://console.anthropic.com  (API Keys)
-  echo    PUAP_MCP_URL        - the admissions MCP server URL (+ PUAP_MCP_TOKEN if it has one)
-  echo    TELEGRAM_BOT_TOKEN  - from @BotFather in Telegram  (/newbot)
+  echo    ANTHROPIC_API_KEY   - from https://console.anthropic.com  (API Keys^)
+  echo    PUAP_MCP_URL        - the admissions MCP server URL (+ PUAP_MCP_TOKEN if it has one^)
+  echo    TELEGRAM_BOT_TOKEN  - from @BotFather in Telegram  (/newbot^)
   echo then save and close Notepad.
   start "" notepad ".env"
 ) else (
